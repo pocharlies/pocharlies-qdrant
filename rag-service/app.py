@@ -205,6 +205,8 @@ async def api_info():
             "/search - Unified hybrid search (cross-collection)",
             "/web/collections - Collection stats",
             "/web/jobs - List crawl jobs",
+            "/web/jobs/{job_id}/stop - Stop a running/queued crawl job",
+            "/web/jobs/{job_id}/resume - Resume a stopped crawl job",
             "/web/logs/{job_id} - Get crawl logs",
         ]
     }
@@ -432,14 +434,15 @@ async def get_stats():
 
 
 def _cleanup_old_jobs():
-    """Remove completed/failed jobs older than 1 hour to free memory."""
+    """Remove completed/failed jobs older than 1 hour, stopped jobs older than 4 hours."""
     now = datetime.now(timezone.utc)
     stale = []
     for jid, job in crawl_jobs.items():
-        if job.status in ("completed", "failed") and job.ended_at:
+        if job.status in ("completed", "failed", "stopped") and job.ended_at:
             try:
                 ended = datetime.fromisoformat(job.ended_at)
-                if (now - ended).total_seconds() > 3600:
+                max_age = 14400 if job.status == "stopped" else 3600
+                if (now - ended).total_seconds() > max_age:
                     stale.append(jid)
             except (ValueError, TypeError):
                 pass
@@ -470,6 +473,19 @@ async def _process_crawl_queue():
                 crawl_jobs[job_id] = j
                 j.job_id = job_id
 
+            # Build resume state if this is a resumed job
+            initial_visited = None
+            initial_bfs_queue = None
+            if job.resumed_from:
+                old_job = crawl_jobs.get(job.resumed_from)
+                if old_job and old_job.visited_urls:
+                    from collections import deque
+                    initial_visited = set(old_job.visited_urls)
+                    initial_bfs_queue = deque(
+                        [(url, depth) for url, depth in old_job.pending_bfs_queue]
+                    )
+                    job.log(f"Resume state loaded: {len(initial_visited)} visited URLs, {len(initial_bfs_queue)} pending in BFS queue")
+
             result = await web_indexer.crawl_and_index(
                 start_url=job.url,
                 max_depth=job.max_depth,
@@ -477,8 +493,11 @@ async def _process_crawl_queue():
                 progress_callback=progress_cb,
                 smart_mode=getattr(job, 'smart_mode', True),
                 llm_client=llm_client,
+                initial_visited=initial_visited,
+                initial_bfs_queue=initial_bfs_queue,
             )
             result.job_id = job_id
+            result.resumed_from = job.resumed_from
             crawl_jobs[job_id] = result
 
             crawl_queue.pop(0)
@@ -544,7 +563,7 @@ async def web_crawl_status(job_id: str):
                 yield f"data: {data}\n\n"
                 prev_data = data
 
-            if job.status in ("completed", "failed"):
+            if job.status in ("completed", "failed", "stopped"):
                 break
 
             await asyncio.sleep(0.5)
@@ -670,6 +689,82 @@ async def unified_search(request: UnifiedSearchRequest):
 async def web_collections():
     """Get stats for all RAG collections (code_index + web_pages)."""
     return {"collections": web_indexer.get_collection_stats()}
+
+
+@app.post("/web/jobs/{job_id}/stop")
+async def web_stop_job(job_id: str):
+    """Stop a running or queued crawl job."""
+    job = crawl_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    if job.status == "queued":
+        if job_id in crawl_queue:
+            crawl_queue.remove(job_id)
+        job.status = "stopped"
+        job.ended_at = datetime.now(timezone.utc).isoformat()
+        job.log("Job cancelled while still queued")
+        return {"status": "stopped", "job_id": job_id, "message": "Queued job cancelled"}
+
+    if job.status == "running":
+        job.cancel_requested = True
+        job.log("Stop requested — will halt after current page completes")
+        return {"status": "stopping", "job_id": job_id, "message": "Stop signal sent, job will halt gracefully"}
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Job is already {job.status}, cannot stop"
+    )
+
+
+@app.post("/web/jobs/{job_id}/resume")
+async def web_resume_job(job_id: str):
+    """Resume a previously stopped crawl job."""
+    old_job = crawl_jobs.get(job_id)
+    if not old_job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    if old_job.status != "stopped":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only stopped jobs can be resumed. Job is: {old_job.status}"
+        )
+
+    import uuid
+    new_job_id = uuid.uuid4().hex[:12]
+
+    new_job = CrawlJob(
+        job_id=new_job_id,
+        url=old_job.url,
+        max_depth=old_job.max_depth,
+        max_pages=old_job.max_pages,
+        status="queued",
+        smart_mode=old_job.smart_mode,
+        resumed_from=job_id,
+        pages_scraped=old_job.pages_scraped,
+        pages_visited=old_job.pages_visited,
+        pages_indexed=old_job.pages_indexed,
+        chunks_indexed=old_job.chunks_indexed,
+        chunks_queued=old_job.chunks_queued,
+    )
+    new_job.log(f"Resumed from job {job_id} ({old_job.pages_visited} pages already visited)")
+
+    crawl_jobs[new_job_id] = new_job
+    crawl_queue.append(new_job_id)
+
+    queue_pos = len(crawl_queue)
+    logger.info(f"Resume job {new_job_id} from {job_id} for {old_job.url} (position {queue_pos})")
+
+    asyncio.create_task(_process_crawl_queue())
+
+    return {
+        "job_id": new_job_id,
+        "resumed_from": job_id,
+        "status": "queued",
+        "url": old_job.url,
+        "queue_position": queue_pos,
+        "pages_already_visited": old_job.pages_visited,
+    }
 
 
 @app.get("/web/jobs")

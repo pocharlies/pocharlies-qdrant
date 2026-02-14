@@ -135,16 +135,18 @@ function renderRagJobs(jobs) {
   el.innerHTML = `<div class="rag-jobs-list">${sorted.map(j => {
     const statusClass = j.status === 'completed' ? 'active'
       : j.status === 'running' ? 'running'
+      : j.status === 'stopped' ? 'stopped'
       : j.status === 'failed' ? 'failed' : 'inactive';
     const eta = j.eta_seconds ? _formatEta(j.eta_seconds) : '';
     const queuePos = j.queue_position && j.status === 'queued' ? ` (queue #${j.queue_position})` : '';
     const scraped = j.pages_scraped || 0;
     const visited = j.pages_visited || j.pages_indexed;
+    const resumeNote = j.resumed_from ? ` (resumed)` : '';
     return `
       <div class="rag-job-row glass">
         <div class="rag-job-info">
           <span class="rag-job-url">${escapeHtml(j.url)}</span>
-          <span class="rag-source-meta">depth ${j.max_depth} &middot; max ${j.max_pages.toLocaleString()} pages${queuePos}</span>
+          <span class="rag-source-meta">depth ${j.max_depth} &middot; max ${j.max_pages.toLocaleString()} pages${queuePos}${resumeNote}</span>
         </div>
         <div class="rag-job-stats">
           <span>${j.pages_indexed} indexed / ${scraped} scraped / ${visited} visited</span>
@@ -152,6 +154,12 @@ function renderRagJobs(jobs) {
           ${eta ? `<span class="rag-eta">ETA: ${eta}</span>` : ''}
         </div>
         <div class="rag-job-actions">
+          ${j.status === 'running' || j.status === 'queued'
+            ? `<button class="btn-stop" onclick="stopCrawlJob('${j.job_id}')" title="Stop crawl">Stop</button>`
+            : ''}
+          ${j.can_resume
+            ? `<button class="btn-resume" onclick="resumeCrawlJob('${j.job_id}')" title="Resume crawl">Resume</button>`
+            : ''}
           <button class="btn-logs" onclick="viewCrawlLogs('${j.job_id}')" title="View logs">Logs</button>
           <span class="rag-status-badge ${statusClass}">${escapeHtml(j.status)}</span>
         </div>
@@ -243,7 +251,7 @@ function attachCrawlStream(jobId) {
           + (job.current_url ? ` — ${job.current_url}` : '');
       }
 
-      if (job.status === 'completed' || job.status === 'failed') {
+      if (job.status === 'completed' || job.status === 'failed' || job.status === 'stopped') {
         es.close();
         _ragCrawlEventSource = null;
         btn.disabled = false;
@@ -251,6 +259,8 @@ function attachCrawlStream(jobId) {
         if (job.status === 'completed') {
           progressBar.style.width = '100%';
           infoEl.textContent = `Completed: ${job.pages_indexed} pages, ${job.chunks_indexed} chunks indexed (${job.pages_visited} visited)`;
+        } else if (job.status === 'stopped') {
+          infoEl.textContent = `Stopped: ${job.pages_indexed} pages indexed so far. Job can be resumed.`;
         } else {
           infoEl.textContent = `Failed: ${job.errors?.[job.errors.length - 1] || 'Unknown error'}`;
         }
@@ -284,6 +294,39 @@ async function deleteRagSource(domain) {
     fetchRagSources();
   } catch (e) {
     alert(`Failed to delete: ${e.message}`);
+  }
+}
+
+// ── Stop / Resume ───────────────────────────────────────────
+
+async function stopCrawlJob(jobId) {
+  if (!confirm('Stop this crawl job? You can resume it later.')) return;
+  try {
+    const r = await fetch(`/web/jobs/${jobId}/stop`, { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Stop failed');
+    fetchRagJobs();
+  } catch (e) {
+    alert(`Failed to stop job: ${e.message}`);
+  }
+}
+
+async function resumeCrawlJob(jobId) {
+  try {
+    const r = await fetch(`/web/jobs/${jobId}/resume`, { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Resume failed');
+    attachCrawlStream(data.job_id);
+    const progressWrap = document.getElementById('rag-crawl-progress');
+    const infoEl = document.getElementById('rag-crawl-info');
+    const btn = document.getElementById('rag-crawl-btn');
+    progressWrap.style.display = 'block';
+    infoEl.textContent = `Resuming from job ${jobId}...`;
+    btn.disabled = true;
+    btn.textContent = 'Crawling...';
+    fetchRagJobs();
+  } catch (e) {
+    alert(`Failed to resume job: ${e.message}`);
   }
 }
 
@@ -387,7 +430,7 @@ async function viewCrawlLogs(jobId) {
   if (job) {
     subtitleEl.textContent = job.url;
     stateEl.textContent = job.status;
-    stateEl.className = `op-state op-state-${job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'running'}`;
+    stateEl.className = `op-state op-state-${job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : job.status === 'stopped' ? 'warning' : 'running'}`;
   }
   idEl.textContent = `job: ${jobId}`;
   logEl.textContent = '';
@@ -415,10 +458,10 @@ async function _fetchRagLogs() {
 
     if (data.status) {
       stateEl.textContent = data.status;
-      stateEl.className = `op-state op-state-${data.status === 'completed' ? 'success' : data.status === 'failed' ? 'error' : 'running'}`;
+      stateEl.className = `op-state op-state-${data.status === 'completed' ? 'success' : data.status === 'failed' ? 'error' : data.status === 'stopped' ? 'warning' : 'running'}`;
     }
 
-    if (data.status === 'completed' || data.status === 'failed') {
+    if (data.status === 'completed' || data.status === 'failed' || data.status === 'stopped') {
       if (_ragLogsInterval) {
         clearInterval(_ragLogsInterval);
         _ragLogsInterval = null;

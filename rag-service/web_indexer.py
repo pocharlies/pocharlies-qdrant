@@ -81,6 +81,10 @@ class CrawlJob:
     eta_seconds: Optional[int] = None
     smart_mode: bool = True
     analysis_status: str = ""         # "" | "analyzing" | "done" | "skipped" | "failed"
+    cancel_requested: bool = False    # cooperative cancellation flag
+    visited_urls: List[str] = field(default_factory=list)       # saved on stop for resume
+    pending_bfs_queue: List[tuple] = field(default_factory=list) # saved on stop for resume
+    resumed_from: Optional[str] = None  # parent job_id if resumed
     _last_eta_check: float = 0.0
     _last_eta_visited: int = 0
 
@@ -140,6 +144,8 @@ class CrawlJob:
             "ended_at": self.ended_at,
             "eta_seconds": self.eta_seconds,
             "analysis_status": self.analysis_status,
+            "resumed_from": self.resumed_from,
+            "can_resume": self.status == "stopped",
         }
 
 
@@ -822,6 +828,8 @@ Rules:
         progress_callback: Optional[Callable] = None,
         smart_mode: bool = True,
         llm_client=None,
+        initial_visited: Optional[set] = None,
+        initial_bfs_queue=None,
     ) -> CrawlJob:
         """BFS crawl with async producer-consumer pipeline.
 
@@ -885,11 +893,23 @@ Rules:
                         job.log(f"SMART: Analysis complete — {len(extraction_config.content_selectors)} content selectors, {len(extraction_config.exclude_selectors)} exclude selectors")
                     else:
                         job.analysis_status = "failed"
-                        job.log("SMART: Analysis failed, falling back to standard extraction")
+                        job.status = "failed"
+                        job.errors.append("Smart mode analysis failed: LLM could not generate extraction config. Crawl aborted.")
+                        job.log("SMART: Analysis failed. Smart mode was explicitly requested — crawl ABORTED (not falling back to standard extraction)")
+                        job.ended_at = datetime.now(timezone.utc).isoformat()
+                        if progress_callback:
+                            progress_callback(job)
+                        return job
                 except Exception as e:
                     job.analysis_status = "failed"
-                    job.log(f"SMART: Analysis error: {str(e)[:120]}, falling back to standard extraction")
+                    job.status = "failed"
+                    job.errors.append(f"Smart mode analysis error: {str(e)[:200]}. Crawl aborted.")
+                    job.log(f"SMART: Analysis error: {str(e)[:120]}. Smart mode was explicitly requested — crawl ABORTED")
+                    job.ended_at = datetime.now(timezone.utc).isoformat()
                     logger.warning(f"Smart analysis failed for {start_url}: {e}")
+                    if progress_callback:
+                        progress_callback(job)
+                    return job
 
                 if progress_callback:
                     progress_callback(job)
@@ -903,15 +923,19 @@ Rules:
 
         try:
             producer_task = asyncio.create_task(
-                self._producer(start_url, max_depth, max_pages, chunk_queue, job, progress_callback, extraction_config, use_curl_cffi)
+                self._producer(start_url, max_depth, max_pages, chunk_queue, job, progress_callback, extraction_config, use_curl_cffi, initial_visited, initial_bfs_queue)
             )
             consumer_task = asyncio.create_task(
                 self._consumer(chunk_queue, job, progress_callback)
             )
             await asyncio.gather(producer_task, consumer_task)
 
-            job.status = "completed"
-            job.log(f"COMPLETED: {job.pages_indexed} pages indexed, {job.chunks_indexed} chunks, {job.pages_visited} pages visited")
+            if job.cancel_requested:
+                job.status = "stopped"
+                job.log(f"STOPPED: {job.pages_indexed} pages indexed, {job.chunks_indexed} chunks, {job.pages_visited} pages visited (resumable)")
+            else:
+                job.status = "completed"
+                job.log(f"COMPLETED: {job.pages_indexed} pages indexed, {job.chunks_indexed} chunks, {job.pages_visited} pages visited")
 
         except Exception as e:
             job.status = "failed"
@@ -943,10 +967,14 @@ Rules:
         progress_callback: Optional[Callable] = None,
         extraction_config: Optional[ExtractionConfig] = None,
         use_curl_cffi: bool = False,
+        initial_visited: Optional[set] = None,
+        initial_bfs_queue=None,
     ):
         """BFS crawl: fetch pages, extract content, chunk text, put into queue."""
-        visited = set()
-        bfs_queue = deque([(start_url, 0)])
+        visited = initial_visited if initial_visited is not None else set()
+        bfs_queue = initial_bfs_queue if initial_bfs_queue is not None else deque([(start_url, 0)])
+        if initial_visited:
+            job.pages_visited = len(visited)
         # Content dedup: track text fingerprints to skip repeated boilerplate
         content_fingerprints: Dict[str, int] = {}  # hash → count
 
@@ -957,6 +985,13 @@ Rules:
                 job.log(f"Starting crawl: {start_url} (depth={max_depth}, max_pages={max_pages})")
 
                 while bfs_queue and len(visited) < max_pages:
+                    # Check for cancellation
+                    if job.cancel_requested:
+                        job.log("PRODUCER: Stop requested, halting crawl...")
+                        job.visited_urls = list(visited)
+                        job.pending_bfs_queue = list(bfs_queue)
+                        break
+
                     url, depth = bfs_queue.popleft()
                     url = url.rstrip("/")
 
@@ -1065,7 +1100,10 @@ Rules:
                     if progress_callback:
                         progress_callback(job)
 
-            job.log(f"PRODUCER DONE: {job.pages_scraped} pages scraped, {job.chunks_queued} chunks queued")
+            if job.cancel_requested:
+                job.log(f"PRODUCER STOPPED: {job.pages_scraped} pages scraped, {job.chunks_queued} chunks queued (state saved for resume)")
+            else:
+                job.log(f"PRODUCER DONE: {job.pages_scraped} pages scraped, {job.chunks_queued} chunks queued")
 
         finally:
             # Always send sentinel so consumer doesn't hang
