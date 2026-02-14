@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pocharlies Qdrant - RAG Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="bg-layer">
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+    <div class="bg-grid"></div>
+  </div>
+
+  <div class="app">
+    <header class="header glass">
+      <div class="logo-wrap">
+        <div class="logo-mark">PQ</div>
+        <div class="logo-copy">
+          <h1>Pocharlies Qdrant</h1>
+          <p>RAG Service Dashboard</p>
+        </div>
+      </div>
+    </header>
+
+    <!-- Collections -->
+    <section class="section glass">
+      <h2>Collections</h2>
+      <p class="section-desc">Qdrant vector database collections.</p>
+      <div id="rag-collections" class="rag-grid">
+        <p class="muted">Loading...</p>
+      </div>
+    </section>
+
+    <!-- Web Scraper -->
+    <section class="section glass">
+      <h2>Web Scraper</h2>
+      <p class="section-desc">Crawl websites and index content for RAG retrieval.</p>
+      <div class="rag-form">
+        <div class="rag-form-row">
+          <input id="rag-url" type="url" class="rag-input" placeholder="https://example.com" />
+          <select id="rag-depth" class="rag-select">
+            <option value="0">Depth 0 (single page)</option>
+            <option value="1" selected>Depth 1</option>
+            <option value="2">Depth 2</option>
+            <option value="3">Depth 3</option>
+            <option value="4">Depth 4</option>
+            <option value="5">Depth 5 (max)</option>
+          </select>
+          <input id="rag-max-pages" type="number" class="rag-input rag-input-sm" value="50" min="1" max="25000" placeholder="Max pages" />
+          <label class="rag-smart-toggle" title="Use AI to analyze site structure before crawling for better content extraction">
+            <input id="rag-smart-mode" type="checkbox" checked /> Smart
+          </label>
+          <button id="rag-crawl-btn" class="btn btn-accent" onclick="startRagCrawl()">Start Crawling</button>
+        </div>
+      </div>
+      <div id="rag-crawl-progress" class="rag-crawl-status" style="display:none">
+        <div class="rag-progress-bar-wrap">
+          <div id="rag-progress-bar" class="rag-progress-bar"></div>
+        </div>
+        <p id="rag-crawl-info" class="muted"></p>
+      </div>
+    </section>
+
+    <!-- Crawl Jobs -->
+    <section class="section glass">
+      <h2>Crawl Jobs</h2>
+      <p class="section-desc">Active and recently completed crawl jobs.</p>
+      <div id="rag-jobs">
+        <p class="muted">No jobs yet.</p>
+      </div>
+    </section>
+
+    <!-- Indexed Sources -->
+    <section class="section glass">
+      <h2>Indexed Sources</h2>
+      <p class="section-desc">Web domains indexed in the vector database.</p>
+      <div id="rag-sources">
+        <p class="muted">No sources indexed.</p>
+      </div>
+    </section>
+
+    <!-- Search & Test -->
+    <section class="section glass">
+      <h2>Search &amp; Test</h2>
+      <p class="section-desc">Test retrieval from indexed web content.</p>
+      <div class="rag-form">
+        <div class="rag-form-row">
+          <input id="rag-search-query" type="text" class="rag-input" placeholder="Search query..." />
+          <select id="rag-search-domain" class="rag-select">
+            <option value="">All domains</option>
+          </select>
+          <input id="rag-search-topk" type="number" class="rag-input rag-input-sm" value="5" min="1" max="20" placeholder="Top K" />
+          <button class="btn btn-accent" onclick="searchRag()">Search</button>
+        </div>
+      </div>
+      <div id="rag-results">
+        <p class="muted">Enter a query to search indexed content.</p>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>Pocharlies Qdrant &bull; RAG Service</span>
+    </footer>
+  </div>
+
+  <!-- Crawl Logs Modal -->
+  <div id="rag-logs-modal" class="op-modal hidden" aria-hidden="true">
+    <div id="rag-logs-backdrop" class="op-modal-backdrop"></div>
+    <section class="op-modal-panel glass" role="dialog" aria-modal="true" aria-labelledby="rag-logs-title">
+      <header class="op-modal-header">
+        <div class="op-modal-header-copy">
+          <h3 id="rag-logs-title">Crawl Logs</h3>
+          <p id="rag-logs-subtitle" class="muted">Live crawl output</p>
+        </div>
+        <div class="op-modal-actions">
+          <button id="rag-logs-copy" class="btn btn-ghost" onclick="copyRagLogs()">Copy Logs</button>
+          <button id="rag-logs-close" class="btn btn-primary" onclick="closeRagLogs()">Close</button>
+        </div>
+      </header>
+      <div class="op-modal-status">
+        <span id="rag-logs-state" class="op-state op-state-running">running</span>
+        <code id="rag-logs-id">job: -</code>
+      </div>
+      <pre id="rag-logs-content" class="op-modal-log"></pre>
+    </section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
