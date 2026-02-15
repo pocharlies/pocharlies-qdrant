@@ -10,6 +10,33 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+// ── Qdrant Health ───────────────────────────────────────────
+
+async function fetchQdrantHealth() {
+  const badge = document.getElementById('qdrant-health');
+  const details = document.getElementById('qdrant-health-details');
+  if (!badge || !details) return;
+  try {
+    const r = await fetch('/health');
+    const data = await r.json();
+    const q = data.qdrant || {};
+    if (q.status === 'healthy') {
+      badge.textContent = 'healthy';
+      badge.className = 'qdrant-health-badge healthy';
+      const ver = q.version ? `v${q.version}` : '';
+      details.textContent = `${q.url} ${ver} \u2014 ${q.collections} collection${q.collections !== 1 ? 's' : ''}`;
+    } else {
+      badge.textContent = 'unreachable';
+      badge.className = 'qdrant-health-badge unhealthy';
+      details.textContent = `Cannot reach ${q.url || 'Qdrant'}`;
+    }
+  } catch (e) {
+    badge.textContent = 'error';
+    badge.className = 'qdrant-health-badge unhealthy';
+    details.textContent = `Health check failed: ${e.message}`;
+  }
+}
+
 // ── Collections ──────────────────────────────────────────────
 
 let _ragCrawlEventSource = null;
@@ -716,6 +743,7 @@ document.addEventListener('click', (e) => {
 // ── Auto-load on page init ───────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+  fetchQdrantHealth();
   fetchRagCollections();
   fetchRagSources();
   fetchRagJobs();

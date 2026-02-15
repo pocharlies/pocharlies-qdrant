@@ -182,6 +182,52 @@ body {
   color: var(--muted);
 }
 
+/* ── Qdrant Health ───────────────────────────────────────── */
+
+.qdrant-health-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.qdrant-health-header h2 {
+  margin: 0;
+}
+
+.qdrant-health-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+.qdrant-health-badge.healthy {
+  color: var(--success);
+  border: 1px solid rgba(116,246,164,.35);
+  background: rgba(116,246,164,.08);
+}
+
+.qdrant-health-badge.unhealthy {
+  color: var(--danger);
+  border: 1px solid rgba(255,125,159,.35);
+  background: rgba(255,125,159,.08);
+  animation: ragPulse 1.2s ease-in-out infinite;
+}
+
+.qdrant-health-badge.loading {
+  color: var(--muted);
+  border: 1px solid rgba(153,174,197,.2);
+  background: rgba(153,174,197,.04);
+}
+
+.qdrant-health-details {
+  margin-top: 4px;
+  font-size: 0.82rem;
+}
+
 /* ── Utilities ────────────────────────────────────────────── */
 
 .muted {

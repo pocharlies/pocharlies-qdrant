@@ -216,7 +216,35 @@ async def api_info():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "pocharlies-qdrant-rag"}
+    qdrant_ok = False
+    qdrant_version = None
+    qdrant_collections = 0
+    try:
+        import httpx as _httpx
+        headers = {}
+        if QDRANT_API_KEY:
+            headers["api-key"] = QDRANT_API_KEY
+        resp = _httpx.get(f"{QDRANT_URL}/collections", headers=headers, timeout=3.0)
+        if resp.status_code == 200:
+            qdrant_ok = True
+            qdrant_collections = len(resp.json().get("result", {}).get("collections", []))
+        # Get Qdrant version
+        resp_info = _httpx.get(f"{QDRANT_URL}/", headers=headers, timeout=3.0)
+        if resp_info.status_code == 200:
+            qdrant_version = resp_info.json().get("version")
+    except Exception:
+        pass
+
+    return {
+        "status": "healthy" if qdrant_ok else "degraded",
+        "service": "pocharlies-qdrant-rag",
+        "qdrant": {
+            "status": "healthy" if qdrant_ok else "unreachable",
+            "url": QDRANT_URL,
+            "version": qdrant_version,
+            "collections": qdrant_collections,
+        },
+    }
 
 
 # ── Code Retrieval ────────────────────────────────────────────
