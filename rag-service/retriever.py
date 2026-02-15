@@ -8,8 +8,27 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
 
+from urllib.parse import urlparse
 from qdrant_client import QdrantClient
+from qdrant_client.http.models import (
+    Filter, FieldCondition, MatchValue,
+    Prefetch, FusionQuery, Fusion,
+)
 from sentence_transformers import SentenceTransformer
+from sparse_encoder import encode_sparse_query
+
+
+def _make_qdrant_client(url: str, api_key: Optional[str] = None) -> QdrantClient:
+    """Create QdrantClient, handling HTTPS URLs (qdrant_client 1.7 needs explicit port/https)."""
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return QdrantClient(
+            host=parsed.hostname,
+            port=parsed.port or 443,
+            https=True,
+            api_key=api_key,
+        )
+    return QdrantClient(url=url, api_key=api_key)
 
 
 @dataclass
@@ -32,7 +51,7 @@ class CodeRetriever:
         embedding_model: str = "BAAI/bge-base-en-v1.5",
         collection_name: str = "code_index"
     ):
-        self.client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+        self.client = _make_qdrant_client(qdrant_url, qdrant_api_key)
         self.model = SentenceTransformer(embedding_model)
         self.collection_name = collection_name
 
@@ -44,38 +63,40 @@ class CodeRetriever:
         language_filter: Optional[str] = None
     ) -> List[RetrievalResult]:
         """
-        Retrieve relevant code chunks for a query.
+        Retrieve relevant code chunks using hybrid search (dense + sparse BM25 with RRF fusion).
         """
         # BGE models benefit from query prefix for retrieval
         query_with_prefix = f"Represent this sentence for searching relevant passages: {query}"
 
-        query_vector = self.model.encode(
+        dense_vector = self.model.encode(
             query_with_prefix,
             normalize_embeddings=True
         ).tolist()
 
+        sparse_vector = encode_sparse_query(query)
+
         # Build filter
         filter_conditions = []
         if repo_filter:
-            filter_conditions.append({
-                "key": "repo",
-                "match": {"value": repo_filter}
-            })
+            filter_conditions.append(
+                FieldCondition(key="repo", match=MatchValue(value=repo_filter))
+            )
         if language_filter:
-            filter_conditions.append({
-                "key": "language",
-                "match": {"value": language_filter}
-            })
+            filter_conditions.append(
+                FieldCondition(key="language", match=MatchValue(value=language_filter))
+            )
 
-        search_filter = None
-        if filter_conditions:
-            search_filter = {"must": filter_conditions}
+        search_filter = Filter(must=filter_conditions) if filter_conditions else None
 
-        results = self.client.search(
+        results = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_vector,
+            prefetch=[
+                Prefetch(query=dense_vector, using="dense", filter=search_filter, limit=top_k * 3),
+                Prefetch(query=sparse_vector, using="sparse", filter=search_filter, limit=top_k * 3),
+            ],
+            query=FusionQuery(fusion=Fusion.RRF),
             limit=top_k,
-            query_filter=search_filter
+            with_payload=True,
         )
 
         return [
@@ -89,7 +110,7 @@ class CodeRetriever:
                 score=hit.score,
                 symbols=hit.payload.get('symbols', [])
             )
-            for hit in results
+            for hit in results.points
         ]
 
 

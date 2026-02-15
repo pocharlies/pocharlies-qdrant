@@ -22,6 +22,7 @@ import validators
 from indexer import CodeIndexer
 from retriever import CodeRetriever, CodeTools, TOOL_DEFINITIONS
 from web_indexer import WebIndexer, CrawlJob
+from agent import AgentTask, run_agent_task
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ llm_client: OpenAI = None
 crawl_jobs: Dict[str, CrawlJob] = {}
 crawl_queue: List[str] = []  # ordered list of job_ids waiting to run
 _crawl_running: bool = False
+
+# Agent tasks
+agent_tasks: Dict[str, AgentTask] = {}
 
 
 @asynccontextmanager
@@ -74,6 +78,14 @@ async def lifespan(app: FastAPI):
         base_url=VLLM_BASE_URL,
         api_key=LITELLM_API_KEY,
     )
+
+    # Pre-load BM25 sparse encoder so first search is fast
+    try:
+        from sparse_encoder import get_bm25_model
+        get_bm25_model()
+        logger.info("BM25 sparse encoder loaded")
+    except Exception as e:
+        logger.warning(f"BM25 preload failed (will load on first search): {e}")
 
     logger.info("RAG service initialized successfully")
 
@@ -147,6 +159,23 @@ class WebSearchRequest(BaseModel):
     domain: Optional[str] = None
 
 
+class UnifiedSearchRequest(BaseModel):
+    query: str
+    top_k: int = 10
+    collection: str = "all"  # "all" | "web" | "code"
+    domain: Optional[str] = None
+    repo: Optional[str] = None
+    language: Optional[str] = None
+
+
+class AgentTaskRequest(BaseModel):
+    prompt: str
+
+
+class AgentContextRequest(BaseModel):
+    message: str
+
+
 # ── Dashboard ─────────────────────────────────────────────────
 
 @app.get("/")
@@ -173,6 +202,7 @@ async def api_info():
             "/web/sources - List indexed web domains",
             "/web/source/{domain} - Delete web domain",
             "/web/search - Search web content",
+            "/search - Unified hybrid search (cross-collection)",
             "/web/collections - Collection stats",
             "/web/jobs - List crawl jobs",
             "/web/logs/{job_id} - Get crawl logs",
@@ -556,6 +586,86 @@ async def web_search(request: WebSearchRequest):
     return {"results": results, "query": request.query}
 
 
+def _cross_collection_rrf(results: List[dict], top_k: int, k: int = 60) -> List[dict]:
+    """Client-side RRF to merge results from multiple collections."""
+    for i, r in enumerate(results):
+        r["_rrf_score"] = 1.0 / (k + i + 1)
+
+    # Group by collection, re-rank within each group by original order
+    by_collection: Dict[str, List[dict]] = {}
+    for r in results:
+        col = r.get("collection", "unknown")
+        by_collection.setdefault(col, []).append(r)
+
+    # Assign per-collection RRF ranks
+    merged = []
+    for col, items in by_collection.items():
+        for rank, item in enumerate(items):
+            item["_rrf_score"] = 1.0 / (k + rank + 1)
+            merged.append(item)
+
+    # Sort by RRF score descending, take top_k
+    merged.sort(key=lambda x: x["_rrf_score"], reverse=True)
+    merged = merged[:top_k]
+
+    # Normalize scores: top result = 1.0
+    if merged:
+        max_score = merged[0]["_rrf_score"]
+        for r in merged:
+            r["score"] = round(r["_rrf_score"] / max_score, 4) if max_score > 0 else 0
+            del r["_rrf_score"]
+
+    return merged
+
+
+@app.post("/search")
+async def unified_search(request: UnifiedSearchRequest):
+    """Unified hybrid search across web_pages and/or code_index collections."""
+    results = []
+
+    if request.collection in ("all", "web"):
+        try:
+            web_results = web_indexer.search(
+                query=request.query,
+                top_k=request.top_k,
+                domain_filter=request.domain,
+            )
+            for r in web_results:
+                r["collection"] = "web_pages"
+                r["source_type"] = "web"
+            results.extend(web_results)
+        except Exception as e:
+            logger.warning(f"Web search failed: {e}")
+
+    if request.collection in ("all", "code"):
+        try:
+            code_results = retriever.retrieve(
+                query=request.query,
+                top_k=request.top_k,
+                repo_filter=request.repo,
+                language_filter=request.language,
+            )
+            for r in code_results:
+                results.append({
+                    "path": r.path,
+                    "repo": r.repo,
+                    "start_line": r.start_line,
+                    "end_line": r.end_line,
+                    "text": r.text,
+                    "score": round(r.score, 4),
+                    "symbols": r.symbols,
+                    "collection": "code_index",
+                    "source_type": "code",
+                })
+        except Exception as e:
+            logger.warning(f"Code search failed: {e}")
+
+    if request.collection == "all" and results:
+        results = _cross_collection_rrf(results, request.top_k)
+
+    return {"results": results, "query": request.query, "collection": request.collection}
+
+
 @app.get("/web/collections")
 async def web_collections():
     """Get stats for all RAG collections (code_index + web_pages)."""
@@ -591,6 +701,150 @@ async def web_logs(job_id: str, offset: int = 0):
         "offset": offset,
         "status": job.status,
     }
+
+
+# ── Agent Endpoints ───────────────────────────────────────────
+
+
+def _cleanup_old_agent_tasks():
+    now = datetime.now(timezone.utc)
+    stale = []
+    for tid, task in agent_tasks.items():
+        if task.status in ("completed", "failed", "cancelled") and task.ended_at:
+            try:
+                ended = datetime.fromisoformat(task.ended_at)
+                if (now - ended).total_seconds() > 7200:
+                    stale.append(tid)
+            except (ValueError, TypeError):
+                pass
+    for tid in stale:
+        del agent_tasks[tid]
+
+
+@app.get("/agent/status")
+async def agent_service_status():
+    """Check if LLM is available for agent tasks."""
+    try:
+        models = llm_client.models.list()
+        model_id = models.data[0].id if models.data else None
+    except Exception:
+        model_id = None
+
+    if model_id:
+        return {"available": True, "model_id": model_id}
+    return {"available": False, "reason": "No LLM model available. Configure LLM_BASE_URL."}
+
+
+@app.post("/agent/task")
+async def create_agent_task(request: AgentTaskRequest):
+    """Create and start a new agent task."""
+    _cleanup_old_agent_tasks()
+
+    prompt = request.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+
+    running = sum(1 for t in agent_tasks.values() if t.status == "running")
+    if running >= 3:
+        raise HTTPException(status_code=429, detail="Maximum 3 concurrent agent tasks")
+
+    import uuid
+    task_id = uuid.uuid4().hex[:12]
+    task = AgentTask(task_id=task_id, prompt=prompt)
+    agent_tasks[task_id] = task
+
+    asyncio.create_task(run_agent_task(task, llm_client, web_indexer, retriever))
+    logger.info(f"Started agent task {task_id}: {prompt[:80]}")
+
+    return {"task_id": task_id, "status": "running"}
+
+
+@app.get("/agent/tasks")
+async def list_agent_tasks():
+    """List all agent tasks."""
+    tasks = [t.to_dict() for t in agent_tasks.values()]
+    tasks.sort(key=lambda t: t.get("started_at", ""), reverse=True)
+    return {"tasks": tasks}
+
+
+@app.get("/agent/task/{task_id}")
+async def get_agent_task(task_id: str):
+    task = agent_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    return task.to_dict()
+
+
+@app.get("/agent/task/{task_id}/stream")
+async def agent_task_stream(task_id: str):
+    """SSE stream of agent task progress."""
+    if task_id not in agent_tasks:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+    async def event_stream():
+        prev_data = None
+        while True:
+            task = agent_tasks.get(task_id)
+            if not task:
+                yield f"data: {json.dumps({'error': 'Task disappeared'})}\n\n"
+                break
+
+            data = json.dumps(task.to_dict())
+            if data != prev_data:
+                yield f"data: {data}\n\n"
+                prev_data = data
+
+            if task.status in ("completed", "failed", "cancelled"):
+                break
+
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/agent/task/{task_id}/logs")
+async def agent_task_logs(task_id: str, offset: int = 0):
+    task = agent_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    return {
+        "task_id": task_id,
+        "logs": task.logs[offset:],
+        "total": len(task.logs),
+        "offset": offset,
+        "status": task.status,
+    }
+
+
+@app.post("/agent/task/{task_id}/stop")
+async def stop_agent_task(task_id: str):
+    task = agent_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    if task.status != "running":
+        raise HTTPException(status_code=400, detail=f"Task is not running (status: {task.status})")
+    task._cancel_event.set()
+    task.log("Cancel requested by user")
+    return {"task_id": task_id, "status": "cancelling"}
+
+
+@app.post("/agent/task/{task_id}/context")
+async def inject_agent_context(task_id: str, request: AgentContextRequest):
+    task = agent_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    if task.status != "running":
+        raise HTTPException(status_code=400, detail=f"Task is not running (status: {task.status})")
+    message = request.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    await task._context_queue.put(message)
+    task.log(f"Context injected: {message[:200]}")
+    return {"task_id": task_id, "injected": True}
 
 
 if __name__ == "__main__":

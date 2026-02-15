@@ -36,6 +36,23 @@
       </div>
     </section>
 
+    <!-- AI Agent -->
+    <section id="agent-section" class="section glass">
+      <h2>AI Agent</h2>
+      <p class="section-desc">Autonomous agent that can search the web, crawl websites, and manage your RAG database.</p>
+      <div id="agent-status-bar" class="agent-status-bar">
+        <span class="muted">Checking LLM availability...</span>
+      </div>
+      <div id="agent-form" class="rag-form" style="display:none">
+        <div class="rag-form-row">
+          <textarea id="agent-prompt" class="rag-input agent-textarea" rows="2"
+                    placeholder="Describe a task... e.g. 'Find and index the top 5 airsoft stores in Spain'"></textarea>
+          <button id="agent-run-btn" class="btn btn-accent" onclick="startAgentTask()">Run Agent</button>
+        </div>
+      </div>
+      <div id="agent-tasks-list"></div>
+    </section>
+
     <!-- Web Scraper -->
     <section class="section glass">
       <h2>Web Scraper</h2>
@@ -87,14 +104,19 @@
     <!-- Search & Test -->
     <section class="section glass">
       <h2>Search &amp; Test</h2>
-      <p class="section-desc">Test retrieval from indexed web content.</p>
+      <p class="section-desc">Hybrid search across web pages and code repositories.</p>
       <div class="rag-form">
         <div class="rag-form-row">
           <input id="rag-search-query" type="text" class="rag-input" placeholder="Search query..." />
+          <select id="rag-search-collection" class="rag-select">
+            <option value="all">All collections</option>
+            <option value="web">Web pages</option>
+            <option value="code">Code index</option>
+          </select>
           <select id="rag-search-domain" class="rag-select">
             <option value="">All domains</option>
           </select>
-          <input id="rag-search-topk" type="number" class="rag-input rag-input-sm" value="5" min="1" max="20" placeholder="Top K" />
+          <input id="rag-search-topk" type="number" class="rag-input rag-input-sm" value="10" min="1" max="50" placeholder="Top K" />
           <button class="btn btn-accent" onclick="searchRag()">Search</button>
         </div>
       </div>
@@ -127,6 +149,36 @@
         <code id="rag-logs-id">job: -</code>
       </div>
       <pre id="rag-logs-content" class="op-modal-log"></pre>
+    </section>
+  </div>
+
+  <!-- Agent Task Modal -->
+  <div id="agent-modal" class="op-modal hidden" aria-hidden="true">
+    <div id="agent-modal-backdrop" class="op-modal-backdrop"></div>
+    <section class="op-modal-panel glass" role="dialog" aria-modal="true" aria-labelledby="agent-modal-title">
+      <header class="op-modal-header">
+        <div class="op-modal-header-copy">
+          <h3 id="agent-modal-title">Agent Task</h3>
+          <p id="agent-modal-subtitle" class="muted">Task details</p>
+        </div>
+        <div class="op-modal-actions">
+          <button id="agent-stop-btn" class="btn btn-ghost agent-stop-btn" onclick="stopAgentTask()" style="display:none">Stop</button>
+          <button id="agent-copy-btn" class="btn btn-ghost" onclick="copyAgentLogs()">Copy Logs</button>
+          <button class="btn btn-primary" onclick="closeAgentModal()">Close</button>
+        </div>
+      </header>
+      <div class="op-modal-status">
+        <span id="agent-modal-state" class="op-state op-state-running">running</span>
+        <code id="agent-modal-id">task: -</code>
+        <code id="agent-modal-model" class="muted"></code>
+      </div>
+      <div id="agent-steps" class="agent-steps"></div>
+      <div id="agent-context-form" class="agent-context-form" style="display:none">
+        <input id="agent-context-input" type="text" class="rag-input" placeholder="Send message to agent..."
+               onkeydown="if(event.key==='Enter')injectAgentContext()" />
+        <button class="btn btn-accent" onclick="injectAgentContext()">Send</button>
+      </div>
+      <pre id="agent-logs-content" class="op-modal-log"></pre>
     </section>
   </div>
 

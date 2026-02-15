@@ -1,22 +1,4 @@
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: pocharlies-qdrant
-    ports:
-      - "${QDRANT_PORT:-6333}:6333"
-      - "${QDRANT_GRPC_PORT:-6334}:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-      - ./configs/qdrant.yaml:/qdrant/config/production.yaml:ro
-    environment:
-      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-qdrant-local-key-12345}
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
   rag-service:
     build:
       context: ./rag-service
@@ -28,15 +10,17 @@ services:
       - ./repos:/repos:ro
       - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
     environment:
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-qdrant-local-key-12345}
+      - QDRANT_URL=${QDRANT_URL:-https://qdrant.e-dani.com}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
       - VLLM_BASE_URL=${LLM_BASE_URL:-http://litellm:4000/v1}
       - LITELLM_API_KEY=${LLM_API_KEY:-none}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
       - REPOS_PATH=/repos
-    depends_on:
-      qdrant:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - nvidiadgx
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
@@ -44,5 +28,7 @@ services:
       timeout: 10s
       retries: 3
 
-volumes:
-  qdrant_data:
+networks:
+  nvidiadgx:
+    external: true
+    name: nvidiadgx_default

@@ -31,8 +31,23 @@ from qdrant_client.http.models import (
     VectorParams, Distance, PointStruct,
     Filter, FieldCondition, MatchValue,
     ScrollRequest,
+    SparseVectorParams, SparseIndexParams,
+    Prefetch, FusionQuery, Fusion,
 )
 from sentence_transformers import SentenceTransformer
+
+
+def _make_qdrant_client(url: str, api_key: Optional[str] = None) -> QdrantClient:
+    """Create QdrantClient, handling HTTPS URLs (qdrant_client 1.7 needs explicit port/https)."""
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return QdrantClient(
+            host=parsed.hostname,
+            port=parsed.port or 443,
+            https=True,
+            api_key=api_key,
+        )
+    return QdrantClient(url=url, api_key=api_key)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -149,7 +164,7 @@ class WebIndexer:
         model: Optional[SentenceTransformer] = None,
         embedding_model: str = "BAAI/bge-base-en-v1.5",
     ):
-        self.client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+        self.client = _make_qdrant_client(qdrant_url, qdrant_api_key)
         self._qdrant_url = qdrant_url.rstrip("/")
         self._qdrant_api_key = qdrant_api_key
 
@@ -168,15 +183,28 @@ class WebIndexer:
 
     def _ensure_collection(self):
         collections = [c.name for c in self.client.get_collections().collections]
-        if self.COLLECTION_NAME not in collections:
-            self.client.create_collection(
-                collection_name=self.COLLECTION_NAME,
-                vectors_config=VectorParams(
-                    size=self.dim,
-                    distance=Distance.COSINE,
+        if self.COLLECTION_NAME in collections:
+            # Check if already migrated to named vectors (hybrid)
+            info = self.client.get_collection(self.COLLECTION_NAME)
+            vectors_config = info.config.params.vectors
+            if isinstance(vectors_config, dict) and "dense" in vectors_config:
+                return  # Already has named vectors
+            # Old unnamed-vector collection — delete and recreate
+            logger.warning(f"Recreating {self.COLLECTION_NAME} with named vectors for hybrid search")
+            self.client.delete_collection(self.COLLECTION_NAME)
+
+        self.client.create_collection(
+            collection_name=self.COLLECTION_NAME,
+            vectors_config={
+                "dense": VectorParams(size=self.dim, distance=Distance.COSINE),
+            },
+            sparse_vectors_config={
+                "sparse": SparseVectorParams(
+                    index=SparseIndexParams(on_disk=False),
                 ),
-            )
-            logger.info(f"Created collection: {self.COLLECTION_NAME}")
+            },
+        )
+        logger.info(f"Created hybrid collection: {self.COLLECTION_NAME}")
 
     # ── Robots.txt ─────────────────────────────────────────────────
 
@@ -538,8 +566,9 @@ Rules:
 - Return ONLY the JSON object, no explanation"""
 
         try:
-            # Discover active model
-            models = llm_client.models.list()
+            # Discover active model (run in executor to avoid blocking event loop)
+            loop = asyncio.get_event_loop()
+            models = await loop.run_in_executor(None, llm_client.models.list)
             model_id = models.data[0].id if models.data else None
             if not model_id:
                 job.log("SMART: No LLM model available, skipping analysis")
@@ -547,15 +576,21 @@ Rules:
 
             job.log(f"SMART: Calling LLM ({model_id}) with {len(samples)} page samples...")
 
-            response = llm_client.chat.completions.create(
-                model=model_id,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=1024,
-                temperature=0.1,
-                timeout=60,
+            # Run sync LLM call in thread pool to avoid blocking the event loop.
+            # Timeout set high (5 min) because thinking models (Qwen3-32B) can take
+            # 2-3 minutes to reason through large HTML analysis prompts.
+            response = await loop.run_in_executor(
+                None,
+                lambda: llm_client.chat.completions.create(
+                    model=model_id,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=2048,
+                    temperature=0.1,
+                    timeout=300,
+                ),
             )
 
             response_text = response.choices[0].message.content
@@ -1088,15 +1123,18 @@ Rules:
     # ── Batch embed helper ───────────────────────────────────────
 
     async def _embed_and_build_points(self, chunk_items: list) -> list:
-        """Batch-encode chunks and return PointStruct list.
+        """Batch-encode chunks (dense + sparse) and return PointStruct list.
 
         Uses run_in_executor to keep event loop responsive during CPU-bound
         embedding (allows producer to continue fetching + SSE to stream).
         """
+        from sparse_encoder import encode_sparse
+
         texts = [item["text"] for item in chunk_items]
 
         loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(
+        # Dense embeddings (semantic)
+        dense_embeddings = await loop.run_in_executor(
             None,
             lambda: self.model.encode(
                 texts,
@@ -1104,12 +1142,20 @@ Rules:
                 batch_size=len(texts),
             )
         )
+        # Sparse embeddings (BM25 keyword)
+        sparse_embeddings = await loop.run_in_executor(
+            None,
+            lambda: encode_sparse(texts)
+        )
 
         points = []
         for i, item in enumerate(chunk_items):
             points.append(PointStruct(
                 id=self._generate_id(item["url"], item["chunk_idx"]),
-                vector=embeddings[i].tolist(),
+                vector={
+                    "dense": dense_embeddings[i].tolist(),
+                    "sparse": sparse_embeddings[i],
+                },
                 payload={
                     "url": item["url"],
                     "title": item["title"],
@@ -1227,18 +1273,23 @@ Rules:
         top_k: int = 5,
         domain_filter: Optional[str] = None,
     ) -> List[Dict]:
-        """Search web_pages collection."""
+        """Hybrid search (dense + sparse BM25) on web_pages collection."""
+        from sparse_encoder import encode_sparse_query
+
         try:
             collections = [c.name for c in self.client.get_collections().collections]
             if self.COLLECTION_NAME not in collections:
                 return []
 
-            # BGE query prefix for better retrieval
+            # Dense embedding with BGE query prefix
             prefixed_query = f"{self.BGE_QUERY_PREFIX}{query}"
-            embedding = self.model.encode(
+            dense_embedding = self.model.encode(
                 prefixed_query,
                 normalize_embeddings=True,
             ).tolist()
+
+            # Sparse embedding (BM25)
+            sparse_embedding = encode_sparse_query(query)
 
             search_filter = None
             if domain_filter:
@@ -1251,11 +1302,26 @@ Rules:
                     ]
                 )
 
-            results = self.client.search(
+            # Hybrid query with RRF fusion
+            results = self.client.query_points(
                 collection_name=self.COLLECTION_NAME,
-                query_vector=embedding,
+                prefetch=[
+                    Prefetch(
+                        query=dense_embedding,
+                        using="dense",
+                        filter=search_filter,
+                        limit=top_k * 3,
+                    ),
+                    Prefetch(
+                        query=sparse_embedding,
+                        using="sparse",
+                        filter=search_filter,
+                        limit=top_k * 3,
+                    ),
+                ],
+                query=FusionQuery(fusion=Fusion.RRF),
                 limit=top_k,
-                query_filter=search_filter,
+                with_payload=True,
             )
 
             return [
@@ -1267,12 +1333,13 @@ Rules:
                     "chunk_idx": r.payload.get("chunk_idx", 0),
                     "fetch_date": r.payload.get("fetch_date", ""),
                     "score": round(r.score, 4),
+                    "source_type": "web",
                 }
-                for r in results
+                for r in results.points
             ]
 
         except Exception as e:
-            logger.error(f"Search error: {e}")
+            logger.error(f"Hybrid search error: {e}")
             return []
 
     # ── Collection stats ───────────────────────────────────────────

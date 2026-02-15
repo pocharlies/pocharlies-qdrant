@@ -10,9 +10,26 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
+from urllib.parse import urlparse
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import VectorParams, Distance, PointStruct, Filter, FieldCondition, MatchValue
+from qdrant_client.http.models import (
+    VectorParams, Distance, PointStruct, Filter, FieldCondition, MatchValue,
+    SparseVectorParams, SparseIndexParams,
+)
 from sentence_transformers import SentenceTransformer
+
+
+def _make_qdrant_client(url: str, api_key: Optional[str] = None) -> QdrantClient:
+    """Create QdrantClient, handling HTTPS URLs (qdrant_client 1.7 needs explicit port/https)."""
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return QdrantClient(
+            host=parsed.hostname,
+            port=parsed.port or 443,
+            https=True,
+            api_key=api_key,
+        )
+    return QdrantClient(url=url, api_key=api_key)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,7 +73,7 @@ class CodeIndexer:
         embedding_model: str = "BAAI/bge-base-en-v1.5",
         collection_name: str = "code_index"
     ):
-        self.client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+        self.client = _make_qdrant_client(qdrant_url, qdrant_api_key)
         self.model = SentenceTransformer(embedding_model)
         self.collection_name = collection_name
         self.dim = self.model.get_sentence_embedding_dimension()
@@ -64,17 +81,30 @@ class CodeIndexer:
         self._ensure_collection()
 
     def _ensure_collection(self):
-        """Create collection if it doesn't exist"""
+        """Create collection with hybrid vectors if it doesn't exist."""
         collections = [c.name for c in self.client.get_collections().collections]
-        if self.collection_name not in collections:
-            self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=VectorParams(
-                    size=self.dim,
-                    distance=Distance.COSINE
-                )
-            )
-            logger.info(f"Created collection: {self.collection_name}")
+        if self.collection_name in collections:
+            # Check if already migrated to named vectors (hybrid)
+            info = self.client.get_collection(self.collection_name)
+            vectors_config = info.config.params.vectors
+            if isinstance(vectors_config, dict) and "dense" in vectors_config:
+                return  # Already has named vectors
+            # Old unnamed-vector collection — delete and recreate
+            logger.warning(f"Recreating {self.collection_name} with named vectors for hybrid search")
+            self.client.delete_collection(self.collection_name)
+
+        self.client.create_collection(
+            collection_name=self.collection_name,
+            vectors_config={
+                "dense": VectorParams(size=self.dim, distance=Distance.COSINE),
+            },
+            sparse_vectors_config={
+                "sparse": SparseVectorParams(
+                    index=SparseIndexParams(on_disk=False),
+                ),
+            },
+        )
+        logger.info(f"Created hybrid collection: {self.collection_name}")
 
     def _should_skip(self, path: Path) -> bool:
         """Check if path should be skipped"""
@@ -234,19 +264,25 @@ class CodeIndexer:
                 language = self._get_language(file_path)
                 chunks = self._chunk_code(content)
 
+                from sparse_encoder import encode_sparse
+
+                # Batch encode all chunks for this file
+                chunk_texts = [cd['text'] for cd in chunks]
+                dense_embeddings = self.model.encode(
+                    chunk_texts, normalize_embeddings=True
+                )
+                sparse_embeddings = encode_sparse(chunk_texts)
+
                 for idx, chunk_data in enumerate(chunks):
                     text = chunk_data['text']
                     symbols = self._extract_symbols(text, language)
 
-                    # Create embedding
-                    embedding = self.model.encode(
-                        text,
-                        normalize_embeddings=True
-                    ).tolist()
-
                     point = PointStruct(
                         id=self._generate_id(repo_name, rel_path, idx),
-                        vector=embedding,
+                        vector={
+                            "dense": dense_embeddings[idx].tolist(),
+                            "sparse": sparse_embeddings[idx],
+                        },
                         payload={
                             'repo': repo_name,
                             'path': rel_path,

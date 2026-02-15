@@ -291,6 +291,7 @@ async function deleteRagSource(domain) {
 
 async function searchRag() {
   const queryInput = document.getElementById('rag-search-query');
+  const collectionSelect = document.getElementById('rag-search-collection');
   const domainSelect = document.getElementById('rag-search-domain');
   const topKInput = document.getElementById('rag-search-topk');
   const resultsEl = document.getElementById('rag-results');
@@ -303,42 +304,65 @@ async function searchRag() {
   try {
     const body = {
       query,
-      top_k: parseInt(topKInput.value) || 5,
+      top_k: parseInt(topKInput.value) || 10,
+      collection: collectionSelect.value || 'all',
     };
     const domain = domainSelect.value;
     if (domain) body.domain = domain;
 
-    const r = await fetch('/web/search', {
+    const r = await fetch('/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     const data = await r.json();
-    renderRagResults(data.results || [], data.query);
+    renderRagResults(data.results || [], data.query, data.collection);
   } catch (e) {
     resultsEl.innerHTML = `<p class="muted">Search failed: ${e.message}</p>`;
   }
 }
 
-function renderRagResults(results, query) {
+function renderRagResults(results, query, collection) {
   const el = document.getElementById('rag-results');
   if (!el) return;
   if (!results.length) {
     el.innerHTML = `<p class="muted">No results found for "${escapeHtml(query)}".</p>`;
     return;
   }
-  el.innerHTML = results.map((r, i) => `
-    <div class="rag-result-card glass">
-      <div class="rag-result-header">
-        <span class="rag-result-rank">#${i + 1}</span>
-        <a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="rag-result-url">${escapeHtml(r.url)}</a>
-        <span class="rag-result-score">${(r.score * 100).toFixed(1)}%</span>
-      </div>
-      ${r.title ? `<div class="rag-result-title">${escapeHtml(r.title)}</div>` : ''}
-      <div class="rag-result-text">${escapeHtml(r.text.length > 400 ? r.text.slice(0, 400) + '...' : r.text)}</div>
-      <div class="rag-result-meta">${escapeHtml(r.domain)} &middot; chunk #${r.chunk_idx} &middot; ${r.fetch_date ? new Date(r.fetch_date).toLocaleDateString() : ''}</div>
-    </div>
-  `).join('');
+  el.innerHTML = results.map((r, i) => {
+    const isCode = r.source_type === 'code';
+    const badgeClass = isCode ? 'code' : 'web';
+    const badgeText = isCode ? 'CODE' : 'WEB';
+    const scoreDisplay = `${(r.score * 100).toFixed(1)}%`;
+
+    if (isCode) {
+      const symbols = (r.symbols && r.symbols.length) ? r.symbols.join(', ') : '';
+      const path = `${escapeHtml(r.repo)}/${escapeHtml(r.path)}`;
+      const lines = `L${r.start_line}-${r.end_line}`;
+      return `<div class="rag-result-card glass">
+        <div class="rag-result-header">
+          <span class="rag-result-rank">#${i + 1}</span>
+          <span class="collection-badge ${badgeClass}">${badgeText}</span>
+          <span class="rag-result-path">${path}#${lines}</span>
+          <span class="rag-result-score">${scoreDisplay}</span>
+        </div>
+        <pre class="rag-result-code">${escapeHtml(r.text.length > 600 ? r.text.slice(0, 600) + '...' : r.text)}</pre>
+        <div class="rag-result-meta">${escapeHtml(r.repo)} &middot; ${lines}${symbols ? ' &middot; ' + escapeHtml(symbols) : ''}</div>
+      </div>`;
+    } else {
+      return `<div class="rag-result-card glass">
+        <div class="rag-result-header">
+          <span class="rag-result-rank">#${i + 1}</span>
+          <span class="collection-badge ${badgeClass}">${badgeText}</span>
+          <a href="${escapeHtml(r.url || '')}" target="_blank" rel="noopener" class="rag-result-url">${escapeHtml(r.url || '')}</a>
+          <span class="rag-result-score">${scoreDisplay}</span>
+        </div>
+        ${r.title ? `<div class="rag-result-title">${escapeHtml(r.title)}</div>` : ''}
+        <div class="rag-result-text">${escapeHtml(r.text.length > 400 ? r.text.slice(0, 400) + '...' : r.text)}</div>
+        <div class="rag-result-meta">${escapeHtml(r.domain || '')} &middot; chunk #${r.chunk_idx || 0} &middot; ${r.fetch_date ? new Date(r.fetch_date).toLocaleDateString() : ''}</div>
+      </div>`;
+    }
+  }).join('');
 }
 
 // ── Logs Modal ───────────────────────────────────────────────
@@ -430,10 +454,229 @@ document.addEventListener('click', (e) => {
   if (e.target.id === 'rag-logs-backdrop') closeRagLogs();
 });
 
+// ── Agent ─────────────────────────────────────────────────────
+
+let _agentEventSource = null;
+let _agentModalTaskId = null;
+let _agentLogsOffset = 0;
+let _agentLogsInterval = null;
+
+async function checkAgentStatus() {
+  const bar = document.getElementById('agent-status-bar');
+  const form = document.getElementById('agent-form');
+  try {
+    const r = await fetch('/agent/status');
+    const d = await r.json();
+    if (d.available) {
+      bar.innerHTML = `<span class="agent-status-dot online"></span><span class="muted">LLM connected: <strong>${escapeHtml(d.model_id)}</strong></span>`;
+      form.style.display = 'block';
+    } else {
+      bar.innerHTML = `<span class="agent-status-dot offline"></span><span class="muted">${escapeHtml(d.reason)}</span>`;
+      form.style.display = 'none';
+    }
+  } catch (e) {
+    bar.innerHTML = `<span class="agent-status-dot offline"></span><span class="muted">Agent unavailable</span>`;
+    form.style.display = 'none';
+  }
+}
+
+async function fetchAgentTasks() {
+  try {
+    const r = await fetch('/agent/tasks');
+    const d = await r.json();
+    renderAgentTasks(d.tasks || []);
+  } catch (e) { /* silent */ }
+}
+
+function renderAgentTasks(tasks) {
+  const el = document.getElementById('agent-tasks-list');
+  if (!el) return;
+  if (!tasks.length) { el.innerHTML = ''; return; }
+  el.innerHTML = tasks.map(t => {
+    const sc = t.status === 'completed' ? 'active'
+      : t.status === 'running' ? 'running'
+      : t.status === 'failed' || t.status === 'cancelled' ? 'failed' : 'inactive';
+    const tools = t.tools_called.length ? t.tools_called.join(', ') : 'none';
+    const started = t.started_at ? new Date(t.started_at).toLocaleTimeString() : '';
+    return `<div class="agent-task-row">
+      <div class="agent-task-info">
+        <span class="agent-task-prompt">${escapeHtml(t.prompt)}</span>
+        <div class="agent-task-meta">
+          <span>${started}</span>
+          <span class="agent-task-tools">tools: ${escapeHtml(tools)}</span>
+          <span>${t.log_count} logs</span>
+        </div>
+      </div>
+      <div class="rag-job-actions">
+        <button class="btn-logs" onclick="viewAgentTask('${t.task_id}')">Details</button>
+        <span class="rag-status-badge ${sc}">${escapeHtml(t.status)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function startAgentTask() {
+  const promptEl = document.getElementById('agent-prompt');
+  const btn = document.getElementById('agent-run-btn');
+  const prompt = promptEl.value.trim();
+  if (!prompt) { promptEl.focus(); return; }
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  try {
+    const r = await fetch('/agent/task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    promptEl.value = '';
+    viewAgentTask(d.task_id);
+    fetchAgentTasks();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+  btn.disabled = false;
+  btn.textContent = 'Run Agent';
+}
+
+function _stepIcon(type) {
+  const m = { thinking: 'T', tool_call: '>', tool_result: '<', response: 'R', context_injected: '+', cancelled: 'X' };
+  return m[type] || '?';
+}
+
+function renderAgentSteps(steps) {
+  const el = document.getElementById('agent-steps');
+  if (!el) return;
+  if (!steps.length) { el.innerHTML = '<p class="muted" style="padding:4px">No steps yet...</p>'; return; }
+  el.innerHTML = steps.map(s => {
+    const txt = s.content.length > 300 ? s.content.slice(0, 300) + '...' : s.content;
+    return `<div class="agent-step">
+      <span class="agent-step-icon ${escapeHtml(s.type)}">${_stepIcon(s.type)}</span>
+      <span class="agent-step-content">${escapeHtml(txt)}</span>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function viewAgentTask(taskId) {
+  _agentModalTaskId = taskId;
+  _agentLogsOffset = 0;
+
+  const modal = document.getElementById('agent-modal');
+  const logsEl = document.getElementById('agent-logs-content');
+  logsEl.textContent = '';
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+
+  // Connect SSE
+  if (_agentEventSource) _agentEventSource.close();
+  const es = new EventSource('/agent/task/' + taskId + '/stream');
+  _agentEventSource = es;
+
+  es.onmessage = (event) => {
+    try {
+      const t = JSON.parse(event.data);
+      document.getElementById('agent-modal-subtitle').textContent =
+        t.prompt.length > 80 ? t.prompt.slice(0, 80) + '...' : t.prompt;
+      document.getElementById('agent-modal-id').textContent = 'task: ' + t.task_id;
+      document.getElementById('agent-modal-model').textContent = t.model_id ? 'model: ' + t.model_id : '';
+
+      const sc = t.status === 'completed' ? 'success'
+        : (t.status === 'failed' || t.status === 'cancelled') ? 'error' : 'running';
+      const stateEl = document.getElementById('agent-modal-state');
+      stateEl.textContent = t.status;
+      stateEl.className = 'op-state op-state-' + sc;
+
+      const isRunning = t.status === 'running';
+      document.getElementById('agent-stop-btn').style.display = isRunning ? 'inline-flex' : 'none';
+      document.getElementById('agent-context-form').style.display = isRunning ? 'flex' : 'none';
+
+      renderAgentSteps(t.steps || []);
+
+      if (!isRunning) {
+        es.close();
+        _agentEventSource = null;
+        fetchAgentTasks();
+        _fetchAgentLogs();
+      }
+    } catch (e) { /* ignore */ }
+  };
+
+  es.onerror = () => { es.close(); _agentEventSource = null; };
+
+  await _fetchAgentLogs();
+  _agentLogsInterval = setInterval(_fetchAgentLogs, 2000);
+}
+
+async function _fetchAgentLogs() {
+  if (!_agentModalTaskId) return;
+  try {
+    const r = await fetch('/agent/task/' + _agentModalTaskId + '/logs?offset=' + _agentLogsOffset);
+    const d = await r.json();
+    const logsEl = document.getElementById('agent-logs-content');
+    if (d.logs && d.logs.length) {
+      logsEl.textContent += d.logs.join('\n') + '\n';
+      _agentLogsOffset = d.total;
+      logsEl.scrollTop = logsEl.scrollHeight;
+    }
+    if (d.status === 'completed' || d.status === 'failed' || d.status === 'cancelled') {
+      if (_agentLogsInterval) { clearInterval(_agentLogsInterval); _agentLogsInterval = null; }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function stopAgentTask() {
+  if (!_agentModalTaskId) return;
+  if (!confirm('Stop this agent task?')) return;
+  try { await fetch('/agent/task/' + _agentModalTaskId + '/stop', { method: 'POST' }); }
+  catch (e) { alert('Failed: ' + e.message); }
+}
+
+async function injectAgentContext() {
+  if (!_agentModalTaskId) return;
+  const input = document.getElementById('agent-context-input');
+  const msg = input.value.trim();
+  if (!msg) { input.focus(); return; }
+  try {
+    const r = await fetch('/agent/task/' + _agentModalTaskId + '/context', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg }),
+    });
+    if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
+    input.value = '';
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+function closeAgentModal() {
+  document.getElementById('agent-modal').classList.add('hidden');
+  document.getElementById('agent-modal').setAttribute('aria-hidden', 'true');
+  if (_agentEventSource) { _agentEventSource.close(); _agentEventSource = null; }
+  if (_agentLogsInterval) { clearInterval(_agentLogsInterval); _agentLogsInterval = null; }
+  _agentModalTaskId = null;
+}
+
+function copyAgentLogs() {
+  const el = document.getElementById('agent-logs-content');
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    const btn = document.getElementById('agent-copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy Logs'; }, 1500);
+  });
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'agent-modal-backdrop') closeAgentModal();
+});
+
 // ── Auto-load on page init ───────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
   fetchRagCollections();
   fetchRagSources();
   fetchRagJobs();
+  checkAgentStatus();
+  fetchAgentTasks();
+  setInterval(fetchAgentTasks, 10000);
 });
