@@ -166,6 +166,54 @@ AGENT_TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_products",
+            "description": "Search the product catalog (Shopify products indexed in Qdrant). Supports brand, category, and price filters.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query (e.g. 'Tokyo Marui Hi-Capa')"},
+                    "brand": {"type": "string", "description": "Filter by brand name (optional)"},
+                    "category": {"type": "string", "description": "Filter by category: gbb, aeg, sniper, pistol, shotgun, smg, accessory, gear, etc."},
+                    "top_k": {"type": "integer", "description": "Number of results (default: 5)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_devops",
+            "description": "Search DevOps documentation: runbooks, postmortems, config files, procedures.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query (e.g. 'vLLM OOM recovery')"},
+                    "doc_type": {"type": "string", "description": "Filter by doc type: runbook, postmortem, config, procedure, architecture, documentation"},
+                    "top_k": {"type": "integer", "description": "Number of results (default: 5)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_logs",
+            "description": "Analyze log text to classify errors by severity, identify services, and match related runbooks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "log_text": {"type": "string", "description": "Log text to analyze (error logs, container output, etc.)"},
+                    "service": {"type": "string", "description": "Source service name (e.g. 'vllm', 'litellm', 'nginx')"},
+                },
+                "required": ["log_text"],
+            },
+        },
+    },
 ]
 
 
@@ -351,6 +399,97 @@ async def tool_analyze_site(task, url):
         return err
 
 
+async def tool_search_products(product_indexer, task, query, brand=None, category=None, top_k=5):
+    task.log(f"TOOL search_products: '{query}' (brand={brand}, category={category})")
+    task.add_step("tool_call", f"search_products('{query}', brand={brand}, category={category})")
+    try:
+        results = product_indexer.search(
+            query=query,
+            top_k=int(top_k),
+            brand_filter=brand,
+            category_filter=category,
+        )
+        if not results:
+            msg = f"No products found for '{query}'"
+            task.add_step("tool_result", msg)
+            return msg
+
+        formatted = []
+        for r in results:
+            price_str = f" €{r['price']}" if r.get('price') else ""
+            formatted.append(f"[PRODUCT {r['score']:.2f}] {r.get('brand', '')} {r.get('title', '')}{price_str}\n  SKU: {r.get('sku', 'N/A')} | Category: {r.get('category', 'N/A')}\n  {r['text'][:200]}")
+
+        result = "\n\n".join(formatted)
+        task.add_step("tool_result", f"{len(formatted)} products found")
+        task.log(f"RESULT: {len(formatted)} products")
+        return result
+    except Exception as e:
+        err = f"Product search failed: {str(e)[:300]}"
+        task.add_step("tool_result", err)
+        return err
+
+
+async def tool_search_devops(devops_indexer, task, query, doc_type=None, top_k=5):
+    task.log(f"TOOL search_devops: '{query}' (doc_type={doc_type})")
+    task.add_step("tool_call", f"search_devops('{query}', doc_type={doc_type})")
+    try:
+        results = devops_indexer.search(
+            query=query,
+            top_k=int(top_k),
+            doc_type_filter=doc_type,
+        )
+        if not results:
+            msg = f"No DevOps docs found for '{query}'"
+            task.add_step("tool_result", msg)
+            return msg
+
+        formatted = []
+        for r in results:
+            formatted.append(f"[DEVOPS {r['score']:.2f}] {r.get('title', 'Untitled')} ({r.get('doc_type', 'unknown')})\n  Source: {r.get('source_path', 'N/A')}\n  {r['text'][:300]}")
+
+        result = "\n\n".join(formatted)
+        task.add_step("tool_result", f"{len(formatted)} docs found")
+        task.log(f"RESULT: {len(formatted)} devops docs")
+        return result
+    except Exception as e:
+        err = f"DevOps search failed: {str(e)[:300]}"
+        task.add_step("tool_result", err)
+        return err
+
+
+async def tool_analyze_logs(log_analyzer, task, log_text, service="unknown"):
+    task.log(f"TOOL analyze_logs: {len(log_text)} chars from '{service}'")
+    task.add_step("tool_call", f"analyze_logs(service={service}, {len(log_text)} chars)")
+    try:
+        job = await log_analyzer.analyze_logs(log_text=log_text, source_service=service)
+        if not job.results:
+            msg = "No notable errors or warnings found in the log text."
+            task.add_step("tool_result", msg)
+            return msg
+
+        formatted = []
+        for r in job.results:
+            runbooks_str = ""
+            if r.get("related_runbooks"):
+                runbooks_str = "\n  Related runbooks: " + ", ".join(
+                    rb.get("title", "?") for rb in r["related_runbooks"][:3]
+                )
+            formatted.append(
+                f"[{r.get('severity', 'unknown').upper()}] {r.get('error_type', 'unknown')} — {r.get('summary', '')}"
+                f"\n  Service: {r.get('service', service)}"
+                f"{runbooks_str}"
+            )
+
+        result = "\n\n".join(formatted)
+        task.add_step("tool_result", f"{len(formatted)} issues found ({', '.join(f'{k}: {v}' for k, v in job.categories.items())})")
+        task.log(f"RESULT: {len(formatted)} log issues")
+        return result
+    except Exception as e:
+        err = f"Log analysis failed: {str(e)[:300]}"
+        task.add_step("tool_result", err)
+        return err
+
+
 # ── Agent Runner ──────────────────────────────────────────────
 
 
@@ -358,15 +497,23 @@ class AgentCancelled(Exception):
     pass
 
 
-AGENT_SYSTEM_PROMPT = """You are an autonomous AI agent managing a web content RAG (Retrieval-Augmented Generation) system. You have tools to:
+AGENT_SYSTEM_PROMPT = """You are an autonomous AI agent managing a multi-purpose RAG (Retrieval-Augmented Generation) system for an airsoft e-commerce business and DevOps operations. You have tools to:
 
+**Web & Content:**
 1. **web_search** — Search the internet to find relevant URLs
 2. **analyze_site** — Check if a URL is accessible before crawling
 3. **crawl_website** — Crawl and index a website into the vector database
 4. **search_indexed** — Search already-indexed content (web pages, code repos, or both)
-5. **list_collections** — View database statistics
+5. **list_collections** — View database statistics for all collections
 6. **list_sources** — See what domains are already indexed
 7. **delete_source** — Remove a domain's content from the index
+
+**Product Catalog:**
+8. **search_products** — Search the Shopify product catalog with brand/category filters
+
+**DevOps & SRE:**
+9. **search_devops** — Search DevOps documentation (runbooks, postmortems, config, procedures)
+10. **analyze_logs** — Analyze log text to classify errors, identify services, and match runbooks
 
 When given a task:
 - Plan your approach step by step
@@ -374,6 +521,8 @@ When given a task:
 - Use analyze_site to check URLs before committing to crawl them
 - Use crawl_website to index useful content
 - Use search_indexed to verify content was indexed correctly
+- Use search_products for product catalog queries
+- Use search_devops and analyze_logs for DevOps/SRE tasks
 - Report your progress and findings clearly
 
 Be efficient: don't crawl sites that are already indexed (check with list_sources first).
@@ -383,7 +532,7 @@ When finished, provide a clear summary of what you accomplished."""
 MAX_AGENT_ITERATIONS = 30
 
 
-async def run_agent_task(task: AgentTask, llm_client, web_indexer, retriever=None):
+async def run_agent_task(task: AgentTask, llm_client, web_indexer, retriever=None, product_indexer=None, devops_indexer=None, log_analyzer=None):
     """Execute the agent loop. Runs as asyncio background task."""
     task.started_at = datetime.now(timezone.utc).isoformat()
     task.status = "running"
@@ -423,6 +572,12 @@ async def run_agent_task(task: AgentTask, llm_client, web_indexer, retriever=Non
         "web_search": lambda **kw: tool_web_search(task, **kw),
         "analyze_site": lambda **kw: tool_analyze_site(task, **kw),
     }
+    if product_indexer:
+        tool_dispatch["search_products"] = lambda **kw: tool_search_products(product_indexer, task, **kw)
+    if devops_indexer:
+        tool_dispatch["search_devops"] = lambda **kw: tool_search_devops(devops_indexer, task, **kw)
+    if log_analyzer:
+        tool_dispatch["analyze_logs"] = lambda **kw: tool_analyze_logs(log_analyzer, task, **kw)
 
     try:
         for iteration in range(MAX_AGENT_ITERATIONS):

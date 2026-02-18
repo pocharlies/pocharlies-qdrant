@@ -23,6 +23,12 @@ from indexer import CodeIndexer
 from retriever import CodeRetriever, CodeTools, TOOL_DEFINITIONS
 from web_indexer import WebIndexer, CrawlJob
 from agent import AgentTask, run_agent_task
+from product_indexer import ProductIndexer, ProductSyncJob
+from product_classifier import ProductClassifier, ClassificationJob
+from translator import TranslationPipeline, TranslationJob
+from devops_indexer import DevOpsIndexer, LogAnalyzer, DevOpsIndexJob, LogAnalysisJob
+from shopify_client import ShopifyClient
+from reranker import get_reranker, init_reranker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,11 +40,23 @@ VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://litellm:4000/v1")
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", "none")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
 REPOS_PATH = os.getenv("REPOS_PATH", "/repos")
+DEVOPS_DOCS_PATH = os.getenv("DEVOPS_DOCS_PATH", "/devops-docs")
+SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", "")
+SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
+RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 
 # Global instances
 retriever: CodeRetriever = None
 indexer: CodeIndexer = None
 web_indexer: WebIndexer = None
+competitor_indexer: WebIndexer = None
+product_indexer: ProductIndexer = None
+product_classifier: ProductClassifier = None
+translator: TranslationPipeline = None
+devops_indexer: DevOpsIndexer = None
+log_analyzer: LogAnalyzer = None
+shopify_client: ShopifyClient = None
 tools: CodeTools = None
 llm_client: OpenAI = None
 
@@ -47,13 +65,28 @@ crawl_jobs: Dict[str, CrawlJob] = {}
 crawl_queue: List[str] = []  # ordered list of job_ids waiting to run
 _crawl_running: bool = False
 
+# Product sync jobs
+product_sync_jobs: Dict[str, ProductSyncJob] = {}
+
+# Classification jobs
+classification_jobs: Dict[str, ClassificationJob] = {}
+
+# Translation jobs
+translation_jobs: Dict[str, TranslationJob] = {}
+
+# DevOps jobs
+devops_index_jobs: Dict[str, DevOpsIndexJob] = {}
+log_analysis_jobs: Dict[str, LogAnalysisJob] = {}
+
 # Agent tasks
 agent_tasks: Dict[str, AgentTask] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global retriever, indexer, web_indexer, tools, llm_client
+    global retriever, indexer, web_indexer, competitor_indexer, tools, llm_client
+    global product_indexer, product_classifier, translator
+    global devops_indexer, log_analyzer, shopify_client
 
     logger.info("Initializing RAG service components...")
 
@@ -73,11 +106,46 @@ async def lifespan(app: FastAPI):
         qdrant_api_key=QDRANT_API_KEY,
         model=indexer.model,
     )
+    competitor_indexer = WebIndexer(
+        qdrant_url=QDRANT_URL,
+        qdrant_api_key=QDRANT_API_KEY,
+        model=indexer.model,
+        collection_name="competitor_products",
+    )
+    product_indexer = ProductIndexer(
+        qdrant_url=QDRANT_URL,
+        qdrant_api_key=QDRANT_API_KEY,
+        model=indexer.model,
+    )
     tools = CodeTools(repos_base_path=REPOS_PATH)
     llm_client = OpenAI(
         base_url=VLLM_BASE_URL,
         api_key=LITELLM_API_KEY,
     )
+
+    # Shopify client (optional)
+    if SHOPIFY_SHOP_DOMAIN and SHOPIFY_ACCESS_TOKEN:
+        shopify_client = ShopifyClient(
+            shop_domain=SHOPIFY_SHOP_DOMAIN,
+            access_token=SHOPIFY_ACCESS_TOKEN,
+        )
+        logger.info(f"Shopify client configured for {SHOPIFY_SHOP_DOMAIN}")
+
+    # Product classifier + translator (use LLM)
+    product_classifier = ProductClassifier(
+        qdrant_client=web_indexer.client,
+        model=indexer.model,
+        llm_client=llm_client,
+    )
+    translator = TranslationPipeline(llm_client=llm_client)
+
+    # DevOps indexer + log analyzer
+    devops_indexer = DevOpsIndexer(
+        qdrant_url=QDRANT_URL,
+        qdrant_api_key=QDRANT_API_KEY,
+        model=indexer.model,
+    )
+    log_analyzer = LogAnalyzer(llm_client=llm_client, devops_indexer=devops_indexer)
 
     # Pre-load BM25 sparse encoder so first search is fast
     try:
@@ -86,6 +154,14 @@ async def lifespan(app: FastAPI):
         logger.info("BM25 sparse encoder loaded")
     except Exception as e:
         logger.warning(f"BM25 preload failed (will load on first search): {e}")
+
+    # Reranker (optional, ~568MB model)
+    if RERANKER_ENABLED:
+        try:
+            init_reranker(RERANKER_MODEL)
+            logger.info(f"Reranker loaded: {RERANKER_MODEL}")
+        except Exception as e:
+            logger.warning(f"Reranker load failed (search will work without reranking): {e}")
 
     logger.info("RAG service initialized successfully")
 
@@ -117,6 +193,7 @@ class RetrieveRequest(BaseModel):
     top_k: int = 8
     repo: Optional[str] = None
     language: Optional[str] = None
+    rerank: bool = True
 
 
 class RetrieveResponse(BaseModel):
@@ -157,15 +234,19 @@ class WebSearchRequest(BaseModel):
     query: str
     top_k: int = 5
     domain: Optional[str] = None
+    rerank: bool = True
 
 
 class UnifiedSearchRequest(BaseModel):
     query: str
     top_k: int = 10
-    collection: str = "all"  # "all" | "web" | "code"
+    collection: str = "all"  # "all" | "web" | "code" | "products" | "competitors" | "devops"
     domain: Optional[str] = None
     repo: Optional[str] = None
     language: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    rerank: bool = True
 
 
 class AgentTaskRequest(BaseModel):
@@ -174,6 +255,60 @@ class AgentTaskRequest(BaseModel):
 
 class AgentContextRequest(BaseModel):
     message: str
+
+
+class ProductSyncRequest(BaseModel):
+    sync_type: str = "full"  # "full" | "incremental"
+    since: Optional[str] = None  # ISO timestamp for incremental
+
+
+class ProductSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    rerank: bool = True
+
+
+class CompetitorCrawlRequest(BaseModel):
+    url: str
+    max_depth: int = 2
+    max_pages: int = 50
+    smart_mode: bool = True
+
+
+class ClassifyRequest(BaseModel):
+    domain: str
+    collection: str = "competitor_products"  # which collection to extract from
+    batch_size: int = 5
+
+
+class EntityResolveRequest(BaseModel):
+    domain: str
+
+
+class TranslateRequest(BaseModel):
+    texts: List[str]
+    source_lang: str = "en"
+    target_lang: str = "es"
+
+
+class DevOpsIndexRequest(BaseModel):
+    path: str
+    recursive: bool = True
+
+
+class DevOpsSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    doc_type: Optional[str] = None
+
+
+class LogAnalyzeRequest(BaseModel):
+    log_text: str
+    service: str = "unknown"
 
 
 # ── Dashboard ─────────────────────────────────────────────────
@@ -235,6 +370,14 @@ async def health():
     except Exception:
         pass
 
+    # Get per-collection stats
+    collection_stats = {}
+    if qdrant_ok:
+        try:
+            collection_stats = {c["name"]: c for c in web_indexer.get_collection_stats()}
+        except Exception:
+            pass
+
     return {
         "status": "healthy" if qdrant_ok else "degraded",
         "service": "pocharlies-qdrant-rag",
@@ -242,7 +385,14 @@ async def health():
             "status": "healthy" if qdrant_ok else "unreachable",
             "url": QDRANT_URL,
             "version": qdrant_version,
-            "collections": qdrant_collections,
+            "collections_count": qdrant_collections,
+            "collections": collection_stats,
+        },
+        "services": {
+            "reranker": RERANKER_ENABLED and get_reranker() is not None,
+            "shopify": shopify_client is not None,
+            "devops_indexer": devops_indexer is not None,
+            "product_indexer": product_indexer is not None,
         },
     }
 
@@ -253,27 +403,33 @@ async def health():
 async def retrieve_code(request: RetrieveRequest):
     """Retrieve relevant code chunks for a query"""
     try:
+        reranker = get_reranker()
+        effective_top_k = request.top_k * 4 if (reranker and request.rerank) else request.top_k
+
         results = retriever.retrieve(
             query=request.query,
-            top_k=request.top_k,
+            top_k=effective_top_k,
             repo_filter=request.repo,
             language_filter=request.language
         )
 
-        return RetrieveResponse(
-            results=[
-                {
-                    "path": r.path,
-                    "repo": r.repo,
-                    "start_line": r.start_line,
-                    "end_line": r.end_line,
-                    "text": r.text,
-                    "score": r.score,
-                    "symbols": r.symbols
-                }
-                for r in results
-            ]
-        )
+        result_dicts = [
+            {
+                "path": r.path,
+                "repo": r.repo,
+                "start_line": r.start_line,
+                "end_line": r.end_line,
+                "text": r.text,
+                "score": r.score,
+                "symbols": r.symbols
+            }
+            for r in results
+        ]
+
+        if reranker and request.rerank and result_dicts:
+            result_dicts = reranker.rerank(request.query, result_dicts, top_k=request.top_k)
+
+        return RetrieveResponse(results=result_dicts)
     except Exception as e:
         logger.error(f"Error retrieving: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -514,7 +670,10 @@ async def _process_crawl_queue():
                     )
                     job.log(f"Resume state loaded: {len(initial_visited)} visited URLs, {len(initial_bfs_queue)} pending in BFS queue")
 
-            result = await web_indexer.crawl_and_index(
+            # Use competitor_indexer for jobs tagged as competitor crawls
+            active_indexer = competitor_indexer if getattr(job, '_competitor', False) else web_indexer
+
+            result = await active_indexer.crawl_and_index(
                 start_url=job.url,
                 max_depth=job.max_depth,
                 max_pages=job.max_pages,
@@ -625,11 +784,18 @@ async def web_delete_source(domain: str):
 @app.post("/web/search")
 async def web_search(request: WebSearchRequest):
     """Search web_pages collection."""
+    reranker = get_reranker()
+    effective_top_k = request.top_k * 4 if (reranker and request.rerank) else request.top_k
+
     results = web_indexer.search(
         query=request.query,
-        top_k=request.top_k,
+        top_k=effective_top_k,
         domain_filter=request.domain,
     )
+
+    if reranker and request.rerank and results:
+        results = reranker.rerank(request.query, results, top_k=request.top_k)
+
     return {"results": results, "query": request.query}
 
 
@@ -667,7 +833,7 @@ def _cross_collection_rrf(results: List[dict], top_k: int, k: int = 60) -> List[
 
 @app.post("/search")
 async def unified_search(request: UnifiedSearchRequest):
-    """Unified hybrid search across web_pages and/or code_index collections."""
+    """Unified hybrid search across all collections."""
     results = []
 
     if request.collection in ("all", "web"):
@@ -707,8 +873,53 @@ async def unified_search(request: UnifiedSearchRequest):
         except Exception as e:
             logger.warning(f"Code search failed: {e}")
 
+    if request.collection in ("all", "products"):
+        try:
+            prod_results = product_indexer.search(
+                query=request.query,
+                top_k=request.top_k,
+                brand_filter=request.brand,
+                category_filter=request.category,
+            )
+            for r in prod_results:
+                r["collection"] = "product_catalog"
+            results.extend(prod_results)
+        except Exception as e:
+            logger.warning(f"Product search failed: {e}")
+
+    if request.collection in ("all", "competitors"):
+        try:
+            comp_results = competitor_indexer.search(
+                query=request.query,
+                top_k=request.top_k,
+                domain_filter=request.domain,
+            )
+            for r in comp_results:
+                r["collection"] = "competitor_products"
+                r["source_type"] = "competitor"
+            results.extend(comp_results)
+        except Exception as e:
+            logger.warning(f"Competitor search failed: {e}")
+
+    if request.collection in ("all", "devops"):
+        try:
+            devops_results = devops_indexer.search(
+                query=request.query,
+                top_k=request.top_k,
+            )
+            for r in devops_results:
+                r["collection"] = "devops_docs"
+            results.extend(devops_results)
+        except Exception as e:
+            logger.warning(f"DevOps search failed: {e}")
+
     if request.collection == "all" and results:
         results = _cross_collection_rrf(results, request.top_k)
+
+    # Rerank merged results
+    reranker = get_reranker()
+    if reranker and request.rerank and results:
+        results = reranker.rerank(request.query, results, top_k=request.top_k)
 
     return {"results": results, "query": request.query, "collection": request.collection}
 
@@ -826,6 +1037,283 @@ async def web_logs(job_id: str, offset: int = 0):
     }
 
 
+# ── Product Catalog Endpoints ─────────────────────────────────
+
+
+@app.post("/products/sync")
+async def product_sync(request: ProductSyncRequest):
+    """Start a product catalog sync from Shopify."""
+    if not shopify_client:
+        raise HTTPException(
+            status_code=400,
+            detail="Shopify not configured. Set SHOPIFY_SHOP_DOMAIN and SHOPIFY_ACCESS_TOKEN.",
+        )
+
+    def progress_cb(j: ProductSyncJob):
+        product_sync_jobs[j.job_id] = j
+
+    if request.sync_type == "incremental" and request.since:
+        job = await product_indexer.incremental_sync(
+            shopify_client, request.since, progress_callback=progress_cb
+        )
+    else:
+        job = await product_indexer.index_all_products(
+            shopify_client, progress_callback=progress_cb
+        )
+
+    product_sync_jobs[job.job_id] = job
+    return job.to_dict()
+
+
+@app.get("/products/sync/{job_id}")
+async def product_sync_status(job_id: str):
+    """Get product sync job status."""
+    job = product_sync_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return job.to_dict()
+
+
+@app.post("/products/search")
+async def product_search(request: ProductSearchRequest):
+    """Search product catalog with structured filters."""
+    reranker = get_reranker()
+    effective_top_k = request.top_k * 4 if (reranker and request.rerank) else request.top_k
+
+    results = product_indexer.search(
+        query=request.query,
+        top_k=effective_top_k,
+        brand_filter=request.brand,
+        category_filter=request.category,
+        min_price=request.min_price,
+        max_price=request.max_price,
+    )
+
+    if reranker and request.rerank and results:
+        results = reranker.rerank(request.query, results, top_k=request.top_k)
+
+    return {"results": results, "query": request.query}
+
+
+@app.get("/products/stats")
+async def product_stats():
+    """Get product catalog stats."""
+    return product_indexer.get_stats()
+
+
+# ── Competitor Indexing Endpoints ─────────────────────────────
+
+
+@app.post("/competitor/index-url")
+async def competitor_index_url(request: CompetitorCrawlRequest):
+    """Start crawling a competitor site into competitor_products collection."""
+    if not validators.url(request.url):
+        raise HTTPException(status_code=400, detail=f"Invalid URL: {request.url}")
+
+    import uuid
+    job_id = uuid.uuid4().hex[:12]
+
+    placeholder_job = CrawlJob(
+        job_id=job_id,
+        url=request.url,
+        max_depth=request.max_depth,
+        max_pages=request.max_pages,
+        status="queued",
+        smart_mode=request.smart_mode,
+    )
+    crawl_jobs[job_id] = placeholder_job
+    crawl_queue.append(job_id)
+
+    # Tag this job for competitor indexer
+    placeholder_job._competitor = True
+
+    asyncio.create_task(_process_crawl_queue())
+
+    return {"job_id": job_id, "status": "queued", "url": request.url, "collection": "competitor_products"}
+
+
+@app.get("/competitor/sources")
+async def competitor_sources():
+    """List indexed competitor domains."""
+    return {"sources": competitor_indexer.get_sources()}
+
+
+@app.delete("/competitor/source/{domain:path}")
+async def competitor_delete_source(domain: str):
+    """Delete competitor content for a domain."""
+    success = competitor_indexer.delete_source(domain)
+    if success:
+        return {"status": "deleted", "domain": domain}
+    raise HTTPException(status_code=500, detail=f"Failed to delete domain: {domain}")
+
+
+# ── Classification Endpoints ──────────────────────────────────
+
+
+@app.post("/classify/extract")
+async def classify_extract(request: ClassifyRequest):
+    """Start product extraction job for a domain."""
+    def progress_cb(j: ClassificationJob):
+        classification_jobs[j.job_id] = j
+
+    job = await product_classifier.extract_products_from_collection(
+        domain=request.domain,
+        collection_name=request.collection,
+        batch_size=request.batch_size,
+        progress_callback=progress_cb,
+    )
+    classification_jobs[job.job_id] = job
+    return job.to_dict()
+
+
+@app.get("/classify/status/{job_id}")
+async def classify_status(job_id: str):
+    """Get classification job status."""
+    job = classification_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return job.to_dict()
+
+
+@app.get("/classify/products/{job_id}")
+async def classify_products(job_id: str):
+    """Get extracted products from a classification job."""
+    job = classification_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return {"products": job.results, "count": len(job.results)}
+
+
+@app.post("/classify/resolve")
+async def classify_resolve(request: EntityResolveRequest):
+    """Run entity resolution for a domain's extracted products against the catalog."""
+    # Find the latest classification job for this domain
+    domain_job = None
+    for job in classification_jobs.values():
+        if job.domain == request.domain and job.status == "completed":
+            domain_job = job
+
+    if not domain_job or not domain_job.results:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No completed extraction found for domain: {request.domain}. Run /classify/extract first.",
+        )
+
+    matches = await product_classifier.resolve_entities(
+        extracted_products=domain_job.results,
+        product_indexer=product_indexer,
+    )
+    report = ProductClassifier.generate_price_report(matches)
+    return report
+
+
+# ── Translation Endpoints ─────────────────────────────────────
+
+
+@app.post("/translate/batch")
+async def translate_batch(request: TranslateRequest):
+    """Translate a list of texts."""
+    job = await translator.translate_batch(
+        texts=request.texts,
+        source_lang=request.source_lang,
+        target_lang=request.target_lang,
+    )
+    translation_jobs[job.job_id] = job
+
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "translations": job.results,
+    }
+
+
+@app.get("/translate/status/{job_id}")
+async def translate_status(job_id: str):
+    """Get translation job status."""
+    job = translation_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return job.to_dict()
+
+
+@app.post("/translate/normalize")
+async def translate_normalize(product: dict):
+    """Normalize specs in a product dict."""
+    return TranslationPipeline.normalize_specs(product)
+
+
+# ── DevOps Endpoints ──────────────────────────────────────────
+
+
+@app.post("/devops/index")
+async def devops_index(request: DevOpsIndexRequest):
+    """Index documents from a path."""
+    def progress_cb(j: DevOpsIndexJob):
+        devops_index_jobs[j.job_id] = j
+
+    job = await devops_indexer.index_path(
+        path=request.path,
+        recursive=request.recursive,
+        progress_callback=progress_cb,
+    )
+    devops_index_jobs[job.job_id] = job
+    return job.to_dict()
+
+
+@app.get("/devops/sources")
+async def devops_sources():
+    """List indexed DevOps document sources."""
+    return {"sources": devops_indexer.get_sources()}
+
+
+@app.delete("/devops/source/{source_path:path}")
+async def devops_delete_source(source_path: str):
+    """Delete a DevOps document source."""
+    success = devops_indexer.delete_source(source_path)
+    if success:
+        return {"status": "deleted", "source_path": source_path}
+    raise HTTPException(status_code=500, detail=f"Failed to delete: {source_path}")
+
+
+@app.post("/devops/search")
+async def devops_search(request: DevOpsSearchRequest):
+    """Search DevOps docs (hybrid)."""
+    results = devops_indexer.search(
+        query=request.query,
+        top_k=request.top_k,
+        doc_type_filter=request.doc_type,
+    )
+    return {"results": results, "query": request.query}
+
+
+@app.post("/devops/analyze-logs")
+async def devops_analyze_logs(request: LogAnalyzeRequest):
+    """Start log analysis job."""
+    job = await log_analyzer.analyze_logs(
+        log_text=request.log_text,
+        source_service=request.service,
+    )
+    log_analysis_jobs[job.job_id] = job
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "categories": job.categories,
+        "results_count": len(job.results),
+    }
+
+
+@app.get("/devops/analyze-logs/{job_id}")
+async def devops_log_analysis_result(job_id: str):
+    """Get log analysis results."""
+    job = log_analysis_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return {
+        **job.to_dict(),
+        "results": job.results,
+    }
+
+
 # ── Agent Endpoints ───────────────────────────────────────────
 
 
@@ -876,7 +1364,7 @@ async def create_agent_task(request: AgentTaskRequest):
     task = AgentTask(task_id=task_id, prompt=prompt)
     agent_tasks[task_id] = task
 
-    asyncio.create_task(run_agent_task(task, llm_client, web_indexer, retriever))
+    asyncio.create_task(run_agent_task(task, llm_client, web_indexer, retriever, product_indexer, devops_indexer, log_analyzer))
     logger.info(f"Started agent task {task_id}: {prompt[:80]}")
 
     return {"task_id": task_id, "status": "running"}

@@ -1,12 +1,9 @@
 services:
-  # Qdrant Vector Database (shared by all services)
+  # Qdrant Vector Database (internal only — no host ports to avoid conflicts)
   qdrant:
     image: qdrant/qdrant:latest
     container_name: pocharlies-qdrant
     restart: unless-stopped
-    ports:
-      - "6333:6333"
-      - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     environment:
@@ -14,7 +11,18 @@ services:
     networks:
       - skirmshop-network
 
-  # RAG Service (code indexing, web crawling, semantic search)
+  # Redis Cache (internal only — no host ports to avoid conflicts)
+  redis:
+    image: redis:7-alpine
+    container_name: pocharlies-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - skirmshop-network
+
+  # RAG Service (code indexing, web crawling, semantic search, product pipeline)
   rag-service:
     build:
       context: ./rag-service
@@ -22,9 +30,10 @@ services:
     container_name: pocharlies-rag
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     volumes:
       - ./repos:/repos:ro
+      - ./devops-docs:/devops-docs:ro
       - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
     environment:
       - QDRANT_URL=http://pocharlies-qdrant:6333
@@ -33,12 +42,19 @@ services:
       - LITELLM_API_KEY=${LLM_API_KEY:-none}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
       - REPOS_PATH=/repos
+      - DEVOPS_DOCS_PATH=/devops-docs
+      - REDIS_URL=redis://pocharlies-redis:6379/0
+      - SHOPIFY_SHOP_DOMAIN=${SHOPIFY_SHOP_DOMAIN:-}
+      - SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN:-}
+      - RERANKER_MODEL=${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      - RERANKER_ENABLED=${RERANKER_ENABLED:-true}
     networks:
       - skirmshop-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       - qdrant
+      - redis
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -47,8 +63,7 @@ services:
 
 volumes:
   qdrant_data:
-    external: true
-    name: skirmshopshopifyapp_qdrant_data
+  redis_data:
 
 networks:
   skirmshop-network:

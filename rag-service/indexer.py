@@ -10,26 +10,13 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
-from urllib.parse import urlparse
-from qdrant_client import QdrantClient
 from qdrant_client.http.models import (
     VectorParams, Distance, PointStruct, Filter, FieldCondition, MatchValue,
     SparseVectorParams, SparseIndexParams,
 )
 from sentence_transformers import SentenceTransformer
 
-
-def _make_qdrant_client(url: str, api_key: Optional[str] = None) -> QdrantClient:
-    """Create QdrantClient, handling HTTPS URLs (qdrant_client 1.7 needs explicit port/https)."""
-    parsed = urlparse(url)
-    if parsed.scheme == "https":
-        return QdrantClient(
-            host=parsed.hostname,
-            port=parsed.port or 443,
-            https=True,
-            api_key=api_key,
-        )
-    return QdrantClient(url=url, api_key=api_key)
+from qdrant_utils import make_qdrant_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -73,7 +60,7 @@ class CodeIndexer:
         embedding_model: str = "BAAI/bge-base-en-v1.5",
         collection_name: str = "code_index"
     ):
-        self.client = _make_qdrant_client(qdrant_url, qdrant_api_key)
+        self.client = make_qdrant_client(qdrant_url, qdrant_api_key)
         self.model = SentenceTransformer(embedding_model)
         self.collection_name = collection_name
         self.dim = self.model.get_sentence_embedding_dimension()

@@ -26,7 +26,6 @@ try:
     HAS_CURL_CFFI = True
 except ImportError:
     HAS_CURL_CFFI = False
-from qdrant_client import QdrantClient
 from qdrant_client.http.models import (
     VectorParams, Distance, PointStruct,
     Filter, FieldCondition, MatchValue,
@@ -36,18 +35,7 @@ from qdrant_client.http.models import (
 )
 from sentence_transformers import SentenceTransformer
 
-
-def _make_qdrant_client(url: str, api_key: Optional[str] = None) -> QdrantClient:
-    """Create QdrantClient, handling HTTPS URLs (qdrant_client 1.7 needs explicit port/https)."""
-    parsed = urlparse(url)
-    if parsed.scheme == "https":
-        return QdrantClient(
-            host=parsed.hostname,
-            port=parsed.port or 443,
-            https=True,
-            api_key=api_key,
-        )
-    return QdrantClient(url=url, api_key=api_key)
+from qdrant_utils import make_qdrant_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -169,8 +157,11 @@ class WebIndexer:
         qdrant_api_key: Optional[str] = None,
         model: Optional[SentenceTransformer] = None,
         embedding_model: str = "BAAI/bge-base-en-v1.5",
+        collection_name: Optional[str] = None,
     ):
-        self.client = _make_qdrant_client(qdrant_url, qdrant_api_key)
+        if collection_name:
+            self.COLLECTION_NAME = collection_name
+        self.client = make_qdrant_client(qdrant_url, qdrant_api_key)
         self._qdrant_url = qdrant_url.rstrip("/")
         self._qdrant_api_key = qdrant_api_key
 
@@ -1382,16 +1373,22 @@ Rules:
 
     # ── Collection stats ───────────────────────────────────────────
 
-    def get_collection_stats(self) -> List[Dict]:
+    def get_collection_stats(self, collection_names: Optional[List[str]] = None) -> List[Dict]:
         """Get stats for all RAG collections via REST API."""
         import httpx as _httpx
+
+        if collection_names is None:
+            collection_names = [
+                "code_index", "web_pages", "product_catalog",
+                "competitor_products", "devops_docs",
+            ]
 
         stats = []
         headers = {}
         if self._qdrant_api_key:
             headers["api-key"] = self._qdrant_api_key
 
-        for name in ["code_index", "web_pages"]:
+        for name in collection_names:
             try:
                 resp = _httpx.get(
                     f"{self._qdrant_url}/collections/{name}",
