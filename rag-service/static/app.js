@@ -24,7 +24,8 @@ async function fetchQdrantHealth() {
       badge.textContent = 'healthy';
       badge.className = 'qdrant-health-badge healthy';
       const ver = q.version ? `v${q.version}` : '';
-      details.textContent = `${q.url} ${ver} \u2014 ${q.collections} collection${q.collections !== 1 ? 's' : ''}`;
+      const count = q.collections_count || (q.collections && typeof q.collections === 'object' ? Object.keys(q.collections).length : q.collections) || 0;
+      details.textContent = `${q.url} ${ver} \u2014 ${count} collection${count !== 1 ? 's' : ''}`;
     } else {
       badge.textContent = 'unreachable';
       badge.className = 'qdrant-health-badge unhealthy';
@@ -611,7 +612,7 @@ async function startAgentTask() {
 }
 
 function _stepIcon(type) {
-  const m = { thinking: 'T', tool_call: '>', tool_result: '<', response: 'R', context_injected: '+', cancelled: 'X' };
+  const m = { thinking: 'T', tool_call: '>', tool_result: '<', response: 'R' };
   return m[type] || '?';
 }
 
@@ -659,9 +660,6 @@ async function viewAgentTask(taskId) {
       stateEl.className = 'op-state op-state-' + sc;
 
       const isRunning = t.status === 'running';
-      document.getElementById('agent-stop-btn').style.display = isRunning ? 'inline-flex' : 'none';
-      document.getElementById('agent-context-form').style.display = isRunning ? 'flex' : 'none';
-
       renderAgentSteps(t.steps || []);
 
       if (!isRunning) {
@@ -696,29 +694,6 @@ async function _fetchAgentLogs() {
   } catch (e) { /* ignore */ }
 }
 
-async function stopAgentTask() {
-  if (!_agentModalTaskId) return;
-  if (!confirm('Stop this agent task?')) return;
-  try { await fetch('/agent/task/' + _agentModalTaskId + '/stop', { method: 'POST' }); }
-  catch (e) { alert('Failed: ' + e.message); }
-}
-
-async function injectAgentContext() {
-  if (!_agentModalTaskId) return;
-  const input = document.getElementById('agent-context-input');
-  const msg = input.value.trim();
-  if (!msg) { input.focus(); return; }
-  try {
-    const r = await fetch('/agent/task/' + _agentModalTaskId + '/context', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg }),
-    });
-    if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
-    input.value = '';
-  } catch (e) { alert('Failed: ' + e.message); }
-}
-
 function closeAgentModal() {
   document.getElementById('agent-modal').classList.add('hidden');
   document.getElementById('agent-modal').setAttribute('aria-hidden', 'true');
@@ -740,14 +715,745 @@ document.addEventListener('click', (e) => {
   if (e.target.id === 'agent-modal-backdrop') closeAgentModal();
 });
 
+// ── Product Catalog ──────────────────────────────────────────
+
+async function fetchProductStats() {
+  const el = document.getElementById('product-stats');
+  if (!el) return;
+  try {
+    const r = await fetch('/products/stats');
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    const chips = [];
+    if (d.total_products != null) chips.push('<strong>' + d.total_products.toLocaleString() + '</strong> products');
+    if (d.total_indexed != null) chips.push('<strong>' + d.total_indexed.toLocaleString() + '</strong> indexed');
+    if (d.last_sync) chips.push('Last sync: ' + new Date(d.last_sync).toLocaleString());
+    el.textContent = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'stat-chips';
+    chips.forEach(function(html) {
+      const span = document.createElement('span');
+      span.className = 'stat-chip';
+      span.innerHTML = html;
+      wrap.appendChild(span);
+    });
+    el.appendChild(wrap);
+  } catch (_e) {
+    el.textContent = 'Product catalog not synced yet.';
+    el.className = 'product-stats-bar muted';
+  }
+}
+
+let _productSyncInterval = null;
+
+async function syncProducts(syncType) {
+  const statusEl = document.getElementById('product-sync-status');
+  const barEl = document.getElementById('product-sync-bar');
+  const infoEl = document.getElementById('product-sync-info');
+  statusEl.style.display = 'block';
+  barEl.style.width = '0%';
+  infoEl.textContent = 'Starting ' + syncType + ' sync...';
+  try {
+    const r = await fetch('/products/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sync_type: syncType }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Sync failed');
+    _pollProductSync(d.job_id);
+  } catch (e) {
+    infoEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+function _pollProductSync(jobId) {
+  if (_productSyncInterval) clearInterval(_productSyncInterval);
+  _productSyncInterval = setInterval(async function() {
+    try {
+      const r = await fetch('/products/sync/' + jobId);
+      const d = await r.json();
+      const barEl = document.getElementById('product-sync-bar');
+      const infoEl = document.getElementById('product-sync-info');
+      const pct = d.total_products > 0 ? Math.min(100, Math.round((d.products_synced / d.total_products) * 100)) : 0;
+      barEl.style.width = pct + '%';
+      infoEl.textContent = d.status + ' — ' + (d.products_synced || 0) + ' synced';
+      if (d.status === 'completed' || d.status === 'failed') {
+        clearInterval(_productSyncInterval);
+        _productSyncInterval = null;
+        if (d.status === 'completed') {
+          barEl.style.width = '100%';
+          infoEl.textContent = 'Sync complete: ' + d.products_synced + ' products indexed';
+        }
+        fetchProductStats();
+        fetchRagCollections();
+      }
+    } catch (_e) { /* ignore */ }
+  }, 2000);
+}
+
+async function searchProducts() {
+  const queryEl = document.getElementById('product-search-query');
+  const query = queryEl.value.trim();
+  const brand = document.getElementById('product-search-brand').value.trim();
+  const category = document.getElementById('product-search-category').value.trim();
+  const el = document.getElementById('product-results');
+  if (!query) { queryEl.focus(); return; }
+  el.textContent = 'Searching...';
+  el.className = 'muted';
+  try {
+    const body = { query: query, top_k: 10, rerank: true };
+    if (brand) body.brand = brand;
+    if (category) body.category = category;
+    const r = await fetch('/products/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Search failed');
+    renderProductResults(d.results || []);
+  } catch (e) {
+    el.textContent = 'Search failed: ' + e.message;
+  }
+}
+
+function renderProductResults(results) {
+  const el = document.getElementById('product-results');
+  el.className = '';
+  if (!results.length) { el.textContent = 'No products found.'; el.className = 'muted'; return; }
+  el.textContent = '';
+  results.forEach(function(r, i) {
+    const card = document.createElement('div');
+    card.className = 'rag-result-card glass';
+    const title = r.title || (r.text ? r.text.slice(0, 60) : '');
+    const score = (r.score * 100).toFixed(1) + '%';
+    let html = '<div class="rag-result-header">'
+      + '<span class="rag-result-rank">#' + (i + 1) + '</span>'
+      + '<span class="collection-badge product">PRODUCT</span>'
+      + '<span class="rag-result-title" style="flex:1">' + escapeHtml(title) + '</span>'
+      + '<span class="rag-result-score">' + score + '</span></div>';
+    if (r.brand) html += '<div class="rag-result-meta">Brand: ' + escapeHtml(r.brand) + '</div>';
+    if (r.price) html += '<div class="product-price">' + escapeHtml(r.currency || '\u20AC') + Number(r.price).toFixed(2) + '</div>';
+    if (r.text) html += '<div class="rag-result-text">' + escapeHtml(r.text.slice(0, 300)) + '</div>';
+    card.innerHTML = html;
+    el.appendChild(card);
+  });
+}
+
+// ── Competitor Intelligence ─────────────────────────────────
+
+async function fetchCompetitorSources() {
+  const el = document.getElementById('competitor-sources');
+  const actionsEl = document.getElementById('competitor-actions');
+  const selectEl = document.getElementById('competitor-domain-select');
+  if (!el) return;
+  try {
+    const r = await fetch('/competitor/sources');
+    const d = await r.json();
+    const sources = d.sources || [];
+    if (!sources.length) {
+      el.textContent = 'No competitor sources indexed yet.';
+      el.className = 'muted';
+      actionsEl.style.display = 'none';
+      return;
+    }
+    actionsEl.style.display = 'block';
+    selectEl.textContent = '';
+    var defOpt = document.createElement('option');
+    defOpt.value = '';
+    defOpt.textContent = 'Select domain...';
+    selectEl.appendChild(defOpt);
+    sources.forEach(function(s) {
+      var opt = document.createElement('option');
+      opt.value = s.domain;
+      opt.textContent = s.domain + ' (' + (s.url_count || s.page_count || 0) + ' pages)';
+      selectEl.appendChild(opt);
+    });
+    el.textContent = '';
+    var list = document.createElement('div');
+    list.className = 'rag-sources-list';
+    sources.forEach(function(s) {
+      var row = document.createElement('div');
+      row.className = 'rag-source-row glass';
+      row.innerHTML = '<div class="rag-source-info">'
+        + '<span class="rag-source-domain">' + escapeHtml(s.domain) + '</span>'
+        + '<span class="rag-source-meta">' + (s.url_count || s.page_count || 0) + ' pages &middot; ' + (s.chunk_count || 0) + ' chunks</span>'
+        + '</div>';
+      var btn = document.createElement('button');
+      btn.className = 'btn btn-danger-sm';
+      btn.textContent = 'Delete';
+      btn.onclick = function() { deleteCompetitorSource(s.domain); };
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+    el.appendChild(list);
+  } catch (e) {
+    el.textContent = 'Sources unavailable: ' + e.message;
+    el.className = 'muted';
+  }
+}
+
+async function indexCompetitor() {
+  var url = document.getElementById('competitor-url').value.trim();
+  if (!url) { document.getElementById('competitor-url').focus(); return; }
+  var progressEl = document.getElementById('competitor-progress');
+  var infoEl = document.getElementById('competitor-progress-info');
+  progressEl.style.display = 'block';
+  document.getElementById('competitor-progress-bar').style.width = '0%';
+  infoEl.textContent = 'Starting competitor crawl...';
+  try {
+    var r = await fetch('/competitor/index-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: url,
+        max_depth: parseInt(document.getElementById('competitor-depth').value),
+        max_pages: parseInt(document.getElementById('competitor-max-pages').value),
+        smart_mode: document.getElementById('competitor-smart').checked,
+      }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    infoEl.textContent = 'Queued as job ' + d.job_id + '. Check Crawl Jobs for progress.';
+    attachCrawlStream(d.job_id);
+    fetchRagJobs();
+  } catch (e) {
+    infoEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function deleteCompetitorSource(domain) {
+  if (!confirm('Delete all competitor data from ' + domain + '?')) return;
+  try {
+    var r = await fetch('/competitor/source/' + domain, { method: 'DELETE' });
+    if (!r.ok) throw new Error('Delete failed');
+    fetchCompetitorSources();
+    fetchRagCollections();
+  } catch (e) {
+    alert('Failed: ' + e.message);
+  }
+}
+
+var _classifyInterval = null;
+
+async function extractCompetitorProducts() {
+  var domain = document.getElementById('competitor-domain-select').value;
+  if (!domain) { alert('Select a domain first'); return; }
+  var el = document.getElementById('competitor-results');
+  el.textContent = 'Extracting products with AI...';
+  el.className = 'muted';
+  try {
+    var r = await fetch('/classify/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain: domain }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    _pollClassify(d.job_id);
+  } catch (e) {
+    el.textContent = 'Error: ' + e.message;
+  }
+}
+
+function _pollClassify(jobId) {
+  if (_classifyInterval) clearInterval(_classifyInterval);
+  var el = document.getElementById('competitor-results');
+  _classifyInterval = setInterval(async function() {
+    try {
+      var r = await fetch('/classify/status/' + jobId);
+      var d = await r.json();
+      el.textContent = 'Extracting: ' + (d.processed || 0) + '/' + (d.total || '?') + ' pages processed (' + d.status + ')';
+      if (d.status === 'completed' || d.status === 'failed') {
+        clearInterval(_classifyInterval);
+        _classifyInterval = null;
+        if (d.status === 'completed') {
+          var pr = await fetch('/classify/products/' + jobId);
+          var pd = await pr.json();
+          renderExtractedProducts(pd.products || []);
+        }
+      }
+    } catch (_e) { /* ignore */ }
+  }, 3000);
+}
+
+function renderExtractedProducts(products) {
+  var el = document.getElementById('competitor-results');
+  el.textContent = '';
+  el.className = '';
+  if (!products.length) { el.textContent = 'No products extracted.'; el.className = 'muted'; return; }
+  var header = document.createElement('p');
+  header.className = 'muted';
+  header.textContent = products.length + ' products extracted';
+  header.style.marginBottom = '8px';
+  el.appendChild(header);
+  products.slice(0, 20).forEach(function(p) {
+    var card = document.createElement('div');
+    card.className = 'rag-result-card glass';
+    var html = '<div class="rag-result-header">'
+      + '<span class="collection-badge competitor">COMPETITOR</span>'
+      + '<span class="rag-result-title" style="flex:1">' + escapeHtml(p.name || '') + '</span>';
+    if (p.price) html += '<span class="product-price">' + escapeHtml(p.currency || '\u20AC') + Number(p.price).toFixed(2) + '</span>';
+    html += '</div>';
+    if (p.brand) html += '<div class="rag-result-meta">Brand: ' + escapeHtml(p.brand) + '</div>';
+    card.innerHTML = html;
+    el.appendChild(card);
+  });
+  if (products.length > 20) {
+    var more = document.createElement('p');
+    more.className = 'muted';
+    more.textContent = '...and ' + (products.length - 20) + ' more';
+    el.appendChild(more);
+  }
+}
+
+async function resolveCompetitorProducts() {
+  var domain = document.getElementById('competitor-domain-select').value;
+  if (!domain) { alert('Select a domain first'); return; }
+  var el = document.getElementById('competitor-results');
+  el.textContent = 'Matching competitor products against catalog...';
+  el.className = 'muted';
+  try {
+    var r = await fetch('/classify/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain: domain }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    renderPriceMatches(d.matches || [], d.price_report);
+  } catch (e) {
+    el.textContent = 'Error: ' + e.message;
+  }
+}
+
+function renderPriceMatches(matches, report) {
+  var el = document.getElementById('competitor-results');
+  el.textContent = '';
+  el.className = '';
+  if (report) {
+    var rpt = document.createElement('div');
+    rpt.className = 'price-report glass';
+    var html = '<strong>Price Report</strong>';
+    if (report.avg_diff != null) html += ' — Avg diff: ' + (report.avg_diff > 0 ? '+' : '') + report.avg_diff.toFixed(1) + '%';
+    if (report.cheaper_count != null) html += ' <span class="stat-chip">Cheaper: ' + report.cheaper_count + '</span>';
+    if (report.pricier_count != null) html += ' <span class="stat-chip">Pricier: ' + report.pricier_count + '</span>';
+    rpt.innerHTML = html;
+    el.appendChild(rpt);
+  }
+  if (matches.length) {
+    matches.slice(0, 20).forEach(function(m) {
+      var card = document.createElement('div');
+      card.className = 'rag-result-card glass';
+      var h = '<div class="rag-result-header">'
+        + '<span class="rag-result-score">' + (m.confidence * 100).toFixed(0) + '%</span>'
+        + '<span style="flex:1">' + escapeHtml(m.source && m.source.name || '') + ' &harr; ' + escapeHtml(m.target && m.target.title || '') + '</span></div>';
+      if (m.source && m.source.price && m.target && m.target.price) {
+        h += '<div class="rag-result-meta">Competitor: \u20AC' + Number(m.source.price).toFixed(2)
+          + ' vs Ours: \u20AC' + Number(m.target.price).toFixed(2);
+        if (m.price_diff) h += ' (' + (m.price_diff > 0 ? '+' : '') + m.price_diff.toFixed(1) + '%)';
+        h += '</div>';
+      }
+      card.innerHTML = h;
+      el.appendChild(card);
+    });
+  } else {
+    var msg = document.createElement('p');
+    msg.className = 'muted';
+    msg.textContent = 'No matches found. Try extracting products first.';
+    el.appendChild(msg);
+  }
+}
+
+// ── Translation ─────────────────────────────────────────────
+
+async function translateBatch() {
+  var input = document.getElementById('translate-input').value.trim();
+  if (!input) { document.getElementById('translate-input').focus(); return; }
+  var el = document.getElementById('translate-results');
+  el.textContent = 'Translating...';
+  el.className = 'muted';
+  var texts = input.split('\n').filter(function(t) { return t.trim(); });
+  try {
+    var r = await fetch('/translate/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        texts: texts,
+        source_lang: document.getElementById('translate-source').value,
+        target_lang: document.getElementById('translate-target').value,
+      }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    if (d.job_id && d.status !== 'completed') {
+      _pollTranslation(d.job_id, texts);
+    } else {
+      renderTranslations(texts, d.translations || []);
+    }
+  } catch (e) {
+    el.textContent = 'Translation failed: ' + e.message;
+  }
+}
+
+function _pollTranslation(jobId, originals) {
+  var el = document.getElementById('translate-results');
+  var iv = setInterval(async function() {
+    try {
+      var r = await fetch('/translate/status/' + jobId);
+      var d = await r.json();
+      if (d.status === 'completed' || d.status === 'failed') {
+        clearInterval(iv);
+        if (d.status === 'completed') renderTranslations(originals, d.results || []);
+        else { el.textContent = 'Translation failed.'; el.className = 'muted'; }
+      } else {
+        el.textContent = 'Translating... (' + d.status + ')';
+      }
+    } catch (_e) { /* ignore */ }
+  }, 2000);
+}
+
+function renderTranslations(originals, translations) {
+  var el = document.getElementById('translate-results');
+  el.textContent = '';
+  el.className = '';
+  translations.forEach(function(t, i) {
+    var pair = document.createElement('div');
+    pair.className = 'translate-pair';
+    var orig = document.createElement('div');
+    orig.className = 'translate-original';
+    orig.textContent = originals[i] || '';
+    var arrow = document.createElement('div');
+    arrow.className = 'translate-arrow-sm';
+    arrow.textContent = '\u2192';
+    var trans = document.createElement('div');
+    trans.className = 'translate-translated';
+    trans.textContent = t;
+    pair.appendChild(orig);
+    pair.appendChild(arrow);
+    pair.appendChild(trans);
+    el.appendChild(pair);
+  });
+}
+
+// ── DevOps Docs ─────────────────────────────────────────────
+
+async function fetchDevopsSources() {
+  var el = document.getElementById('devops-sources');
+  if (!el) return;
+  try {
+    var r = await fetch('/devops/sources');
+    var d = await r.json();
+    var sources = d.sources || [];
+    if (!sources.length) {
+      el.textContent = 'No DevOps docs indexed.';
+      el.className = 'muted';
+      return;
+    }
+    el.textContent = '';
+    el.className = '';
+    var list = document.createElement('div');
+    list.className = 'rag-sources-list';
+    sources.forEach(function(s) {
+      var row = document.createElement('div');
+      row.className = 'rag-source-row glass';
+      row.innerHTML = '<div class="rag-source-info">'
+        + '<span class="rag-source-domain">' + escapeHtml(s.path || s.source_path || '') + '</span>'
+        + '<span class="rag-source-meta">' + (s.doc_count || 0) + ' docs</span></div>';
+      var btn = document.createElement('button');
+      btn.className = 'btn btn-danger-sm';
+      btn.textContent = 'Delete';
+      btn.onclick = function() { deleteDevopsSource(s.path || s.source_path || ''); };
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+    el.appendChild(list);
+  } catch (e) {
+    el.textContent = 'Sources unavailable: ' + e.message;
+    el.className = 'muted';
+  }
+}
+
+async function indexDevopsDocs() {
+  var path = document.getElementById('devops-path').value.trim();
+  if (!path) { document.getElementById('devops-path').focus(); return; }
+  var recursive = document.getElementById('devops-recursive').checked;
+  try {
+    var r = await fetch('/devops/index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path, recursive: recursive }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    alert('Indexed ' + (d.docs_indexed || 0) + ' documents');
+    fetchDevopsSources();
+    fetchRagCollections();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteDevopsSource(sourcePath) {
+  if (!confirm('Delete DevOps docs from ' + sourcePath + '?')) return;
+  try {
+    var r = await fetch('/devops/source/' + encodeURIComponent(sourcePath), { method: 'DELETE' });
+    if (!r.ok) throw new Error('Delete failed');
+    fetchDevopsSources();
+    fetchRagCollections();
+  } catch (e) {
+    alert('Failed: ' + e.message);
+  }
+}
+
+async function searchDevops() {
+  var query = document.getElementById('devops-search-query').value.trim();
+  if (!query) { document.getElementById('devops-search-query').focus(); return; }
+  var el = document.getElementById('devops-results');
+  el.textContent = 'Searching...';
+  el.className = 'muted';
+  try {
+    var r = await fetch('/devops/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: query, top_k: 10 }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    var results = d.results || [];
+    el.textContent = '';
+    el.className = '';
+    if (!results.length) { el.textContent = 'No results found.'; el.className = 'muted'; return; }
+    results.forEach(function(res, i) {
+      var card = document.createElement('div');
+      card.className = 'rag-result-card glass';
+      card.innerHTML = '<div class="rag-result-header">'
+        + '<span class="rag-result-rank">#' + (i + 1) + '</span>'
+        + '<span class="collection-badge devops">DEVOPS</span>'
+        + '<span class="rag-result-path" style="flex:1">' + escapeHtml(res.path || res.source || '') + '</span>'
+        + '<span class="rag-result-score">' + (res.score * 100).toFixed(1) + '%</span></div>'
+        + '<div class="rag-result-text">' + escapeHtml((res.text || '').slice(0, 400)) + '</div>';
+      el.appendChild(card);
+    });
+  } catch (e) {
+    el.textContent = 'Search failed: ' + e.message;
+  }
+}
+
+async function analyzeLogs() {
+  var logText = document.getElementById('devops-log-input').value.trim();
+  if (!logText) { document.getElementById('devops-log-input').focus(); return; }
+  var service = document.getElementById('devops-log-service').value.trim();
+  var el = document.getElementById('devops-log-results');
+  el.textContent = 'Analyzing logs...';
+  el.className = 'muted';
+  try {
+    var body = { log_text: logText };
+    if (service) body.service = service;
+    var r = await fetch('/devops/analyze-logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    if (d.job_id && d.status !== 'completed') _pollLogAnalysis(d.job_id);
+    else renderLogAnalysis(d);
+  } catch (e) {
+    el.textContent = 'Error: ' + e.message;
+  }
+}
+
+function _pollLogAnalysis(jobId) {
+  var el = document.getElementById('devops-log-results');
+  var iv = setInterval(async function() {
+    try {
+      var r = await fetch('/devops/analyze-logs/' + jobId);
+      var d = await r.json();
+      if (d.status === 'completed' || d.status === 'failed') { clearInterval(iv); renderLogAnalysis(d); }
+      else { el.textContent = 'Analyzing... (' + d.status + ')'; }
+    } catch (_e) { /* ignore */ }
+  }, 2000);
+}
+
+function renderLogAnalysis(data) {
+  var el = document.getElementById('devops-log-results');
+  el.textContent = '';
+  el.className = '';
+  var results = data.results || [];
+  if (!results.length) {
+    el.textContent = 'No issues found. Categories: ' + ((data.categories || []).join(', ') || 'none');
+    el.className = 'muted';
+    return;
+  }
+  results.forEach(function(res) {
+    var card = document.createElement('div');
+    card.className = 'rag-result-card glass';
+    var sev = res.severity === 'error' ? 'failed' : 'warning';
+    var h = '<div class="rag-result-header">'
+      + '<span class="collection-badge ' + sev + '">' + escapeHtml(res.category || res.severity || 'info') + '</span>'
+      + '<span style="flex:1">' + escapeHtml(res.summary || res.message || '') + '</span></div>';
+    if (res.details) h += '<div class="rag-result-text">' + escapeHtml(res.details) + '</div>';
+    if (res.recommendation) h += '<div class="rag-result-meta" style="color:var(--accent-2)">Fix: ' + escapeHtml(res.recommendation) + '</div>';
+    card.innerHTML = h;
+    el.appendChild(card);
+  });
+}
+
+// ── Code Indexing ───────────────────────────────────────────
+
+async function indexCodeRepo() {
+  var repoPath = document.getElementById('code-repo-path').value.trim();
+  if (!repoPath) { document.getElementById('code-repo-path').focus(); return; }
+  var repoName = document.getElementById('code-repo-name').value.trim();
+  var statusEl = document.getElementById('code-index-status');
+  var infoEl = document.getElementById('code-index-info');
+  statusEl.style.display = 'block';
+  infoEl.textContent = 'Indexing repository...';
+  try {
+    var body = { repo_path: repoPath };
+    if (repoName) body.repo_name = repoName;
+    var r = await fetch('/index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    infoEl.textContent = 'Indexed ' + (d.chunks_indexed || 0) + ' chunks from ' + repoPath;
+    fetchRagCollections();
+  } catch (e) {
+    infoEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function searchCode() {
+  var query = document.getElementById('code-search-query').value.trim();
+  if (!query) { document.getElementById('code-search-query').focus(); return; }
+  var repo = document.getElementById('code-search-repo').value.trim();
+  var topK = parseInt(document.getElementById('code-search-topk').value) || 10;
+  var el = document.getElementById('code-results');
+  el.textContent = 'Searching code...';
+  el.className = 'muted';
+  try {
+    var body = { query: query, top_k: topK, rerank: true };
+    if (repo) body.repo = repo;
+    var r = await fetch('/retrieve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    var results = d.results || [];
+    el.textContent = '';
+    el.className = '';
+    if (!results.length) { el.textContent = 'No code results found.'; el.className = 'muted'; return; }
+    results.forEach(function(res, i) {
+      var path = escapeHtml(res.repo || '') + '/' + escapeHtml(res.path || '');
+      var lines = 'L' + res.start_line + '-' + res.end_line;
+      var symbols = (res.symbols && res.symbols.length) ? res.symbols.join(', ') : '';
+      var card = document.createElement('div');
+      card.className = 'rag-result-card glass';
+      card.innerHTML = '<div class="rag-result-header">'
+        + '<span class="rag-result-rank">#' + (i + 1) + '</span>'
+        + '<span class="collection-badge code">CODE</span>'
+        + '<span class="rag-result-path">' + path + '#' + lines + '</span>'
+        + '<span class="rag-result-score">' + (res.score * 100).toFixed(1) + '%</span></div>'
+        + '<pre class="rag-result-code">' + escapeHtml(res.text.length > 600 ? res.text.slice(0, 600) + '...' : res.text) + '</pre>'
+        + '<div class="rag-result-meta">' + escapeHtml(res.repo || '') + ' &middot; ' + lines + (symbols ? ' &middot; ' + escapeHtml(symbols) : '') + '</div>';
+      el.appendChild(card);
+    });
+  } catch (e) {
+    el.textContent = 'Search failed: ' + e.message;
+  }
+}
+
+// ── Chat with RAG ───────────────────────────────────────────
+
+async function sendChat() {
+  var input = document.getElementById('chat-input');
+  var query = input.value.trim();
+  if (!query) { input.focus(); return; }
+  input.value = '';
+  var messagesEl = document.getElementById('chat-messages');
+
+  var userMsg = document.createElement('div');
+  userMsg.className = 'chat-message user';
+  var userRole = document.createElement('span');
+  userRole.className = 'chat-role';
+  userRole.textContent = 'You';
+  var userText = document.createElement('div');
+  userText.className = 'chat-text';
+  userText.textContent = query;
+  userMsg.appendChild(userRole);
+  userMsg.appendChild(userText);
+  messagesEl.appendChild(userMsg);
+
+  var pendingMsg = document.createElement('div');
+  pendingMsg.className = 'chat-message assistant';
+  pendingMsg.id = 'chat-pending';
+  var aiRole = document.createElement('span');
+  aiRole.className = 'chat-role';
+  aiRole.textContent = 'AI';
+  var aiText = document.createElement('div');
+  aiText.className = 'chat-text muted';
+  aiText.textContent = 'Thinking...';
+  pendingMsg.appendChild(aiRole);
+  pendingMsg.appendChild(aiText);
+  messagesEl.appendChild(pendingMsg);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  try {
+    var r = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: query,
+        use_rag: document.getElementById('chat-use-rag').checked,
+        use_tools: document.getElementById('chat-use-tools').checked,
+      }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    var pending = document.getElementById('chat-pending');
+    if (pending) {
+      pending.removeAttribute('id');
+      aiText = pending.querySelector('.chat-text');
+      aiText.className = 'chat-text';
+      aiText.textContent = d.response || '';
+      if (d.tools_used && d.tools_used.length) {
+        var toolsDiv = document.createElement('div');
+        toolsDiv.className = 'chat-tools';
+        toolsDiv.textContent = 'Tools: ' + d.tools_used.join(', ');
+        pending.appendChild(toolsDiv);
+      }
+    }
+  } catch (e) {
+    var pend = document.getElementById('chat-pending');
+    if (pend) {
+      pend.removeAttribute('id');
+      var errText = pend.querySelector('.chat-text');
+      errText.className = 'chat-text';
+      errText.style.color = 'var(--danger)';
+      errText.textContent = 'Error: ' + e.message;
+    }
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 // ── Auto-load on page init ───────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
   fetchQdrantHealth();
   fetchRagCollections();
   fetchRagSources();
   fetchRagJobs();
   checkAgentStatus();
   fetchAgentTasks();
+  fetchProductStats();
+  fetchCompetitorSources();
+  fetchDevopsSources();
   setInterval(fetchAgentTasks, 10000);
 });
