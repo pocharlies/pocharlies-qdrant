@@ -120,10 +120,13 @@ BRAND_NORMALIZATIONS = {
 LANG_NAMES = {
     "en": "English",
     "es": "Spanish",
+    "ca": "Catalan",
     "fr": "French",
     "de": "German",
     "it": "Italian",
     "pt": "Portuguese",
+    "eu": "Basque",
+    "gl": "Galician",
 }
 
 
@@ -137,6 +140,7 @@ class TranslationPipeline:
         source_lang: str = "en",
         target_lang: str = "es",
         progress_callback: Optional[Callable] = None,
+        rag_context: Optional[str] = None,
     ) -> TranslationJob:
         """Translate a list of texts using the running LLM."""
         job = TranslationJob(
@@ -153,7 +157,7 @@ class TranslationPipeline:
             for i in range(0, len(texts), chunk_size):
                 chunk = texts[i:i + chunk_size]
                 translated = await self._translate_chunk(
-                    chunk, source_lang, target_lang
+                    chunk, source_lang, target_lang, rag_context=rag_context
                 )
                 job.results.extend(translated)
                 job.items_processed = min(i + chunk_size, len(texts))
@@ -180,6 +184,7 @@ class TranslationPipeline:
         texts: List[str],
         source_lang: str,
         target_lang: str,
+        rag_context: Optional[str] = None,
     ) -> List[str]:
         """Single LLM call to translate a small batch of texts."""
         source_name = LANG_NAMES.get(source_lang, source_lang)
@@ -190,6 +195,9 @@ class TranslationPipeline:
             target=target_name,
             target_name=target_name,
         )
+
+        if rag_context:
+            system_prompt += f"\n\nHere are similar products from our catalog for terminology reference:\n{rag_context}"
 
         # Number the texts for clarity
         numbered = "\n\n".join(
