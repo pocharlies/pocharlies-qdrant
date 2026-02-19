@@ -3,8 +3,11 @@ CLI entry point for the RAG agent.
 Usage: python -m agent "Index all Kubernetes migration guides"
 """
 
+import asyncio
 import os
+import uuid
 import logging
+from datetime import datetime, timezone
 
 import typer
 from agents import Runner
@@ -70,7 +73,7 @@ def run(
     api_key = os.getenv("LITELLM_API_KEY", "none")
 
     logger.info(f"Connecting to LLM at {vllm_url}...")
-    from . import create_agent
+    from . import create_agent, AgentTask
     agent, model_id = create_agent(vllm_url, api_key)
     typer.echo(f"Model: {model_id}")
 
@@ -80,8 +83,63 @@ def run(
     typer.echo(f"Running: {prompt}")
     typer.echo("---")
 
-    result = Runner.run_sync(agent, input=prompt, context=services, max_turns=max_turns)
-    typer.echo(result.final_output)
+    asyncio.run(_run_with_persistence(agent, services, prompt, max_turns))
+
+
+async def _run_with_persistence(agent, services, prompt: str, max_turns: int):
+    """Run agent with Redis persistence if available, fallback to plain run."""
+    from . import AgentTask
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    redis_client = None
+    session_store = None
+    session = None
+
+    try:
+        from redis.asyncio import Redis as AsyncRedis
+        redis_client = AsyncRedis.from_url(redis_url, decode_responses=False)
+        await redis_client.ping()
+
+        from .session_store import SessionStore
+        from .redis_session import RedisSession
+
+        session_store = SessionStore(redis_client)
+
+        task_id = uuid.uuid4().hex[:12]
+        task = AgentTask(
+            task_id=task_id,
+            prompt=prompt,
+            started_at=datetime.now(timezone.utc).isoformat(),
+            source="cli",
+        )
+        task._on_log = session_store.add_log
+        task._on_step = session_store.add_step
+        await session_store.create_task(task, source="cli")
+
+        session = RedisSession(task_id, redis_client)
+
+        from .runner import run_task
+        result = await run_task(
+            agent, services, prompt,
+            max_turns=max_turns, task=task,
+            session=session, session_store=session_store,
+        )
+        typer.echo(result.summary or "No output")
+        typer.echo(f"\nTask ID: {task_id} (visible on dashboard)")
+
+    except ImportError:
+        logger.warning("redis package not available, running without persistence")
+        result = Runner.run_sync(agent, input=prompt, context=services, max_turns=max_turns)
+        typer.echo(result.final_output)
+    except Exception as e:
+        if session_store:
+            # Redis was available but something else failed
+            raise
+        logger.warning(f"Redis unavailable ({e}), running without persistence")
+        result = Runner.run_sync(agent, input=prompt, context=services, max_turns=max_turns)
+        typer.echo(result.final_output)
+    finally:
+        if redis_client:
+            await redis_client.aclose()
 
 
 @app.command()
@@ -114,6 +172,17 @@ def status(
         typer.echo(f"Qdrant: OK ({len(collections)} collections: {', '.join(collections)})")
     except Exception as e:
         typer.echo(f"Qdrant: FAIL ({e})")
+
+    # Check Redis
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    try:
+        import redis
+        r = redis.from_url(redis_url)
+        r.ping()
+        task_count = r.zcard("agent:tasks")
+        typer.echo(f"Redis: OK ({task_count} sessions)")
+    except Exception as e:
+        typer.echo(f"Redis: FAIL ({e})")
 
 
 if __name__ == "__main__":

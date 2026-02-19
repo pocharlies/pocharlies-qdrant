@@ -14,7 +14,15 @@ from . import AgentTask, AgentServices
 logger = logging.getLogger(__name__)
 
 
-async def run_task(agent, services: AgentServices, prompt: str, max_turns: int = 30, task: AgentTask = None) -> AgentTask:
+async def run_task(
+    agent,
+    services: AgentServices,
+    prompt: str,
+    max_turns: int = 30,
+    task: AgentTask = None,
+    session=None,
+    session_store=None,
+) -> AgentTask:
     """Run an agent task with streaming event tracking.
 
     Creates an AgentTask (or uses a pre-created one), runs the agent with
@@ -28,6 +36,8 @@ async def run_task(agent, services: AgentServices, prompt: str, max_turns: int =
         max_turns: Maximum agent iterations (default: 30).
         task: Optional pre-created AgentTask (for FastAPI integration where
               the task must be registered before the coroutine starts).
+        session: Optional RedisSession for conversation history persistence.
+        session_store: Optional SessionStore for task metadata persistence.
     """
     if task is None:
         task = AgentTask(
@@ -47,13 +57,23 @@ async def run_task(agent, services: AgentServices, prompt: str, max_turns: int =
     task.log(f"Starting with model: {task.model_id}")
     task.add_step("thinking", f"Planning approach for: {prompt}")
 
+    # Persist initial state
+    if session_store:
+        try:
+            await session_store.update_task(task)
+        except Exception as e:
+            logger.warning(f"Redis update_task failed: {e}")
+
     try:
-        result = Runner.run_streamed(
-            agent,
+        run_kwargs = dict(
             input=prompt,
             context=services,
             max_turns=max_turns,
         )
+        if session:
+            run_kwargs["session"] = session
+
+        result = Runner.run_streamed(agent, **run_kwargs)
 
         async for event in result.stream_events():
             if event.type == "run_item_stream_event":
@@ -91,4 +111,12 @@ async def run_task(agent, services: AgentServices, prompt: str, max_turns: int =
 
     task.ended_at = datetime.now(timezone.utc).isoformat()
     task.log(f"Task ended: {task.status}")
+
+    # Persist final state
+    if session_store:
+        try:
+            await session_store.update_task(task)
+        except Exception as e:
+            logger.warning(f"Redis final update_task failed: {e}")
+
     return task

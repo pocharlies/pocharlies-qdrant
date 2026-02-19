@@ -562,24 +562,27 @@ async function fetchAgentTasks() {
 function renderAgentTasks(tasks) {
   const el = document.getElementById('agent-tasks-list');
   if (!el) return;
-  if (!tasks.length) { el.innerHTML = ''; return; }
+  if (!tasks.length) { el.textContent = ''; return; }
+  // Note: all user-supplied values go through escapeHtml() before insertion
   el.innerHTML = tasks.map(t => {
     const sc = t.status === 'completed' ? 'active'
       : t.status === 'running' ? 'running'
       : t.status === 'failed' || t.status === 'cancelled' ? 'failed' : 'inactive';
-    const tools = t.tools_called.length ? t.tools_called.join(', ') : 'none';
+    const tools = (t.tools_called || []).length ? t.tools_called.join(', ') : 'none';
     const started = t.started_at ? new Date(t.started_at).toLocaleTimeString() : '';
+    const srcLabel = t.source === 'cli' ? 'CLI' : 'WEB';
+    const srcColor = t.source === 'cli' ? '#6366f1' : '#22c55e';
     return `<div class="agent-task-row">
       <div class="agent-task-info">
-        <span class="agent-task-prompt">${escapeHtml(t.prompt)}</span>
+        <span class="agent-task-prompt"><span style="background:${srcColor};color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;margin-right:4px">${srcLabel}</span>${escapeHtml(t.prompt)}</span>
         <div class="agent-task-meta">
-          <span>${started}</span>
+          <span>${escapeHtml(started)}</span>
           <span class="agent-task-tools">tools: ${escapeHtml(tools)}</span>
-          <span>${t.log_count} logs</span>
+          <span>${parseInt(t.log_count || t.step_count || 0)} logs</span>
         </div>
       </div>
       <div class="rag-job-actions">
-        <button class="btn-logs" onclick="viewAgentTask('${t.task_id}')">Details</button>
+        <button class="btn-logs" onclick="viewAgentTask('${escapeHtml(t.task_id)}')">Details</button>
         <span class="rag-status-badge ${sc}">${escapeHtml(t.status)}</span>
       </div>
     </div>`;
@@ -630,6 +633,27 @@ function renderAgentSteps(steps) {
   el.scrollTop = el.scrollHeight;
 }
 
+function _updateAgentModal(t) {
+  document.getElementById('agent-modal-subtitle').textContent =
+    t.prompt && t.prompt.length > 80 ? t.prompt.slice(0, 80) + '...' : (t.prompt || '');
+  document.getElementById('agent-modal-id').textContent = 'task: ' + (t.task_id || '-');
+  document.getElementById('agent-modal-model').textContent = t.model_id ? 'model: ' + t.model_id : '';
+
+  const sc = t.status === 'completed' ? 'success'
+    : (t.status === 'failed' || t.status === 'cancelled') ? 'error' : 'running';
+  const stateEl = document.getElementById('agent-modal-state');
+  stateEl.textContent = t.status;
+  stateEl.className = 'op-state op-state-' + sc;
+
+  renderAgentSteps(t.steps || []);
+
+  // Show resume form for completed/failed tasks
+  const resumeForm = document.getElementById('agent-resume-form');
+  if (resumeForm) {
+    resumeForm.style.display = (t.status === 'completed' || t.status === 'failed') ? 'flex' : 'none';
+  }
+}
+
 async function viewAgentTask(taskId) {
   _agentModalTaskId = taskId;
   _agentLogsOffset = 0;
@@ -640,7 +664,22 @@ async function viewAgentTask(taskId) {
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden', 'false');
 
-  // Connect SSE
+  // First, fetch current state from API (works for both in-memory and Redis-persisted tasks)
+  try {
+    const r = await fetch('/agent/task/' + taskId);
+    if (r.ok) {
+      const t = await r.json();
+      _updateAgentModal(t);
+
+      // If not running, just show the historical data — no SSE needed
+      if (t.status !== 'running') {
+        await _fetchAgentLogs();
+        return;
+      }
+    }
+  } catch (e) { /* continue to SSE */ }
+
+  // Connect SSE for running tasks
   if (_agentEventSource) _agentEventSource.close();
   const es = new EventSource('/agent/task/' + taskId + '/stream');
   _agentEventSource = es;
@@ -648,21 +687,9 @@ async function viewAgentTask(taskId) {
   es.onmessage = (event) => {
     try {
       const t = JSON.parse(event.data);
-      document.getElementById('agent-modal-subtitle').textContent =
-        t.prompt.length > 80 ? t.prompt.slice(0, 80) + '...' : t.prompt;
-      document.getElementById('agent-modal-id').textContent = 'task: ' + t.task_id;
-      document.getElementById('agent-modal-model').textContent = t.model_id ? 'model: ' + t.model_id : '';
+      _updateAgentModal(t);
 
-      const sc = t.status === 'completed' ? 'success'
-        : (t.status === 'failed' || t.status === 'cancelled') ? 'error' : 'running';
-      const stateEl = document.getElementById('agent-modal-state');
-      stateEl.textContent = t.status;
-      stateEl.className = 'op-state op-state-' + sc;
-
-      const isRunning = t.status === 'running';
-      renderAgentSteps(t.steps || []);
-
-      if (!isRunning) {
+      if (t.status !== 'running') {
         es.close();
         _agentEventSource = null;
         fetchAgentTasks();
@@ -700,6 +727,37 @@ function closeAgentModal() {
   if (_agentEventSource) { _agentEventSource.close(); _agentEventSource = null; }
   if (_agentLogsInterval) { clearInterval(_agentLogsInterval); _agentLogsInterval = null; }
   _agentModalTaskId = null;
+}
+
+async function continueAgentTask() {
+  const input = document.getElementById('agent-resume-input');
+  const btn = document.getElementById('agent-resume-btn');
+  const message = input.value.trim();
+  if (!message) { input.focus(); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+
+  try {
+    const r = await fetch('/agent/task/' + _agentModalTaskId + '/continue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+
+    input.value = '';
+    document.getElementById('agent-resume-form').style.display = 'none';
+
+    // Reconnect SSE for the continued task
+    viewAgentTask(_agentModalTaskId);
+    fetchAgentTasks();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+  btn.disabled = false;
+  btn.textContent = 'Continue';
 }
 
 function copyAgentLogs() {

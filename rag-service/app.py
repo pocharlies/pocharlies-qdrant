@@ -24,6 +24,8 @@ from retriever import CodeRetriever, CodeTools, TOOL_DEFINITIONS
 from web_indexer import WebIndexer, CrawlJob
 from agent import AgentTask, AgentServices, create_agent
 from agent.runner import run_task
+from agent.redis_session import RedisSession
+from agent.session_store import SessionStore
 from product_indexer import ProductIndexer, ProductSyncJob
 from product_classifier import ProductClassifier, ClassificationJob
 from translator import TranslationPipeline, TranslationJob
@@ -46,6 +48,7 @@ SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", "")
 SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # Global instances
 retriever: CodeRetriever = None
@@ -62,6 +65,8 @@ tools: CodeTools = None
 llm_client: OpenAI = None
 llm_model_id: str = None  # auto-discovered at startup
 rag_agent = None  # Agent SDK instance, created at startup
+redis_client = None  # Async Redis client for session persistence
+session_store: SessionStore = None
 
 # Active crawl jobs + queue
 crawl_jobs: Dict[str, CrawlJob] = {}
@@ -90,6 +95,7 @@ async def lifespan(app: FastAPI):
     global retriever, indexer, web_indexer, competitor_indexer, tools, llm_client, llm_model_id
     global product_indexer, product_classifier, translator
     global devops_indexer, log_analyzer, shopify_client, rag_agent
+    global redis_client, session_store
 
     logger.info("Initializing RAG service components...")
 
@@ -168,6 +174,18 @@ async def lifespan(app: FastAPI):
         logger.info(f"Agent SDK initialized with model: {_model_id}")
     except Exception as e:
         logger.warning(f"Agent SDK init failed (agent endpoints will fail): {e}")
+
+    # Redis for agent session persistence
+    try:
+        from redis.asyncio import Redis as AsyncRedis
+        redis_client = AsyncRedis.from_url(REDIS_URL, decode_responses=False)
+        await redis_client.ping()
+        session_store = SessionStore(redis_client)
+        logger.info(f"Redis connected: {REDIS_URL}")
+    except Exception as e:
+        logger.warning(f"Redis connection failed ({e}) — agent sessions will not persist")
+        redis_client = None
+        session_store = None
 
     # Pre-load BM25 sparse encoder so first search is fast
     try:
@@ -273,6 +291,10 @@ class UnifiedSearchRequest(BaseModel):
 
 class AgentTaskRequest(BaseModel):
     prompt: str
+
+
+class AgentContinueRequest(BaseModel):
+    message: str
 
 
 class ProductSyncRequest(BaseModel):
@@ -407,6 +429,9 @@ async def health():
             "version": qdrant_version,
             "collections_count": qdrant_collections,
             "collections": collection_stats,
+        },
+        "redis": {
+            "status": "healthy" if redis_client else "not configured",
         },
         "services": {
             "reranker": RERANKER_ENABLED and get_reranker() is not None,
@@ -1429,18 +1454,31 @@ async def devops_log_analysis_result(job_id: str):
 
 
 def _cleanup_old_agent_tasks():
+    """Remove in-memory tasks older than 5 minutes (Redis has the persistent copy)."""
     now = datetime.now(timezone.utc)
     stale = []
     for tid, task in agent_tasks.items():
         if task.status in ("completed", "failed", "cancelled") and task.ended_at:
             try:
                 ended = datetime.fromisoformat(task.ended_at)
-                if (now - ended).total_seconds() > 7200:
+                if (now - ended).total_seconds() > 300:
                     stale.append(tid)
             except (ValueError, TypeError):
                 pass
     for tid in stale:
         del agent_tasks[tid]
+
+
+def _make_services(task: AgentTask = None) -> AgentServices:
+    return AgentServices(
+        web_indexer=web_indexer,
+        retriever=retriever,
+        product_indexer=product_indexer,
+        devops_indexer=devops_indexer,
+        log_analyzer=log_analyzer,
+        llm_client=llm_client,
+        task=task,
+    )
 
 
 @app.get("/agent/status")
@@ -1453,7 +1491,7 @@ async def agent_service_status():
         model_id = None
 
     if model_id:
-        return {"available": True, "model_id": model_id}
+        return {"available": True, "model_id": model_id, "redis": redis_client is not None}
     return {"available": False, "reason": "No LLM model available. Configure LLM_BASE_URL."}
 
 
@@ -1475,21 +1513,27 @@ async def create_agent_task(request: AgentTaskRequest):
 
     import uuid
     task_id = uuid.uuid4().hex[:12]
-    task = AgentTask(task_id=task_id, prompt=prompt, started_at=datetime.now(timezone.utc).isoformat())
-    agent_tasks[task_id] = task
-
-    services = AgentServices(
-        web_indexer=web_indexer,
-        retriever=retriever,
-        product_indexer=product_indexer,
-        devops_indexer=devops_indexer,
-        log_analyzer=log_analyzer,
-        llm_client=llm_client,
-        task=task,
+    task = AgentTask(
+        task_id=task_id,
+        prompt=prompt,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        source="web",
     )
 
+    # Wire Redis persistence callbacks
+    if session_store:
+        task._on_log = session_store.add_log
+        task._on_step = session_store.add_step
+        await session_store.create_task(task, source="web")
+
+    agent_tasks[task_id] = task
+
+    session = RedisSession(task_id, redis_client) if redis_client else None
+    services = _make_services(task)
+
     async def _run():
-        await run_task(rag_agent, services, prompt, task=task)
+        await run_task(rag_agent, services, prompt, task=task,
+                       session=session, session_store=session_store)
 
     asyncio.create_task(_run())
     logger.info(f"Started agent task {task_id}: {prompt[:80]}")
@@ -1497,9 +1541,70 @@ async def create_agent_task(request: AgentTaskRequest):
     return {"task_id": task_id, "status": "running"}
 
 
+@app.post("/agent/task/{task_id}/continue")
+async def continue_agent_task(task_id: str, request: AgentContinueRequest):
+    """Send a follow-up message to continue a completed/failed agent session."""
+    if not rag_agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+    if not session_store or not redis_client:
+        raise HTTPException(status_code=503, detail="Redis not available for session resume")
+
+    existing = await session_store.get_task(task_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Session not found: {task_id}")
+    if existing["status"] == "running":
+        raise HTTPException(status_code=409, detail="Task is still running")
+
+    message = request.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # Reopen the task
+    task = AgentTask(
+        task_id=task_id,
+        prompt=existing.get("prompt", ""),
+        started_at=existing.get("started_at", ""),
+        source=existing.get("source", "web"),
+    )
+    task._on_log = session_store.add_log
+    task._on_step = session_store.add_step
+    task.status = "running"
+    await session_store.update_task(task)
+
+    agent_tasks[task_id] = task
+
+    session = RedisSession(task_id, redis_client)
+    services = _make_services(task)
+
+    task.add_step("thinking", f"Continuing conversation: {message}")
+    task.log(f"Resume with: {message[:200]}")
+
+    async def _run():
+        await run_task(rag_agent, services, message, task=task,
+                       session=session, session_store=session_store)
+
+    asyncio.create_task(_run())
+    logger.info(f"Continued agent task {task_id}: {message[:80]}")
+
+    return {"task_id": task_id, "status": "running", "continued": True}
+
+
 @app.get("/agent/tasks")
 async def list_agent_tasks():
-    """List all agent tasks."""
+    """List all agent tasks (from Redis if available, else in-memory)."""
+    if session_store:
+        try:
+            tasks = await session_store.list_tasks(limit=50)
+            # Merge in-memory running tasks (freshest data)
+            redis_ids = {t["task_id"] for t in tasks}
+            for tid, mem_task in agent_tasks.items():
+                if tid not in redis_ids:
+                    tasks.append(mem_task.to_dict())
+            tasks.sort(key=lambda t: t.get("started_at", ""), reverse=True)
+            return {"tasks": tasks}
+        except Exception as e:
+            logger.warning(f"Redis list_tasks failed, falling back to memory: {e}")
+
     tasks = [t.to_dict() for t in agent_tasks.values()]
     tasks.sort(key=lambda t: t.get("started_at", ""), reverse=True)
     return {"tasks": tasks}
@@ -1507,17 +1612,23 @@ async def list_agent_tasks():
 
 @app.get("/agent/task/{task_id}")
 async def get_agent_task(task_id: str):
-    task = agent_tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
-    return task.to_dict()
+    # In-memory first (running tasks have freshest data)
+    if task_id in agent_tasks:
+        return agent_tasks[task_id].to_dict()
+    # Then Redis
+    if session_store:
+        task_data = await session_store.get_task(task_id)
+        if task_data:
+            task_data["steps"] = await session_store.get_steps(task_id, last_n=50)
+            return task_data
+    raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
 
 @app.get("/agent/task/{task_id}/stream")
 async def agent_task_stream(task_id: str):
     """SSE stream of agent task progress."""
     if task_id not in agent_tasks:
-        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+        raise HTTPException(status_code=404, detail=f"Task not found in active tasks: {task_id}")
 
     async def event_stream():
         prev_data = None
@@ -1546,16 +1657,52 @@ async def agent_task_stream(task_id: str):
 
 @app.get("/agent/task/{task_id}/logs")
 async def agent_task_logs(task_id: str, offset: int = 0):
-    task = agent_tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
-    return {
-        "task_id": task_id,
-        "logs": task.logs[offset:],
-        "total": len(task.logs),
-        "offset": offset,
-        "status": task.status,
-    }
+    # In-memory first
+    if task_id in agent_tasks:
+        task = agent_tasks[task_id]
+        return {
+            "task_id": task_id,
+            "logs": task.logs[offset:],
+            "total": len(task.logs),
+            "offset": offset,
+            "status": task.status,
+        }
+    # Then Redis
+    if session_store:
+        logs, total = await session_store.get_logs(task_id, offset=offset)
+        task_data = await session_store.get_task(task_id)
+        if task_data:
+            return {
+                "task_id": task_id,
+                "logs": logs,
+                "total": total,
+                "offset": offset,
+                "status": task_data.get("status", "unknown"),
+            }
+    raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+
+@app.get("/agent/task/{task_id}/history")
+async def get_agent_conversation_history(task_id: str):
+    """Get the full SDK conversation history for a session (for debugging/inspection)."""
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis not available")
+    session = RedisSession(task_id, redis_client)
+    items = await session.get_items()
+    return {"task_id": task_id, "items": items, "count": len(items)}
+
+
+@app.get("/agent/task/{task_id}/steps")
+async def get_agent_all_steps(task_id: str):
+    """Get ALL steps for a task (not just last 50)."""
+    if session_store:
+        steps = await session_store.get_all_steps(task_id)
+        if steps:
+            return {"task_id": task_id, "steps": steps, "count": len(steps)}
+    # Fallback to in-memory
+    if task_id in agent_tasks:
+        return {"task_id": task_id, "steps": agent_tasks[task_id].steps, "count": len(agent_tasks[task_id].steps)}
+    raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
 
 if __name__ == "__main__":

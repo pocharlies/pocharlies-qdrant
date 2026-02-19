@@ -369,6 +369,12 @@
         <code id="agent-modal-model" class="muted"></code>
       </div>
       <div id="agent-steps" class="agent-steps"></div>
+      <div id="agent-resume-form" class="agent-context-form" style="display:none">
+        <textarea id="agent-resume-input" class="rag-input" rows="2"
+                  placeholder="Send follow-up message to continue..."
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();continueAgentTask()}"></textarea>
+        <button id="agent-resume-btn" class="btn btn-accent" onclick="continueAgentTask()">Continue</button>
+      </div>
       <pre id="agent-logs-content" class="op-modal-log"></pre>
     </section>
   </div>

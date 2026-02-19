@@ -3,9 +3,10 @@ Agent package — OpenAI Agents SDK wrapper for RAG service.
 Replaces the hand-rolled agent loop from agent_legacy.py.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable, Awaitable
 from datetime import datetime, timezone
 
 from openai import OpenAI, AsyncOpenAI
@@ -33,6 +34,11 @@ class AgentTask:
     tools_called: List[str] = field(default_factory=list)
     summary: Optional[str] = None
     error: Optional[str] = None
+    source: str = "web"  # "web" | "cli"
+
+    # Optional async callbacks for Redis persistence (fire-and-forget)
+    _on_log: Optional[Callable[[str, str], Awaitable[None]]] = field(default=None, repr=False)
+    _on_step: Optional[Callable[[str, Dict], Awaitable[None]]] = field(default=None, repr=False)
 
     MAX_LOGS = 3000
 
@@ -42,13 +48,26 @@ class AgentTask:
         self.logs.append(entry)
         if len(self.logs) > self.MAX_LOGS:
             self.logs = self.logs[:50] + self.logs[-(self.MAX_LOGS - 50):]
+        if self._on_log:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._on_log(self.task_id, entry))
+            except RuntimeError:
+                pass  # No event loop (sync context)
 
     def add_step(self, step_type: str, content: str):
-        self.steps.append({
+        step = {
             "type": step_type,
             "content": content[:2000],
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        self.steps.append(step)
+        if self._on_step:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._on_step(self.task_id, step))
+            except RuntimeError:
+                pass
 
     def to_dict(self) -> dict:
         return {
@@ -63,6 +82,7 @@ class AgentTask:
             "summary": self.summary,
             "error": self.error,
             "log_count": len(self.logs),
+            "source": self.source,
         }
 
 
