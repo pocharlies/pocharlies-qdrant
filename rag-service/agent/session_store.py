@@ -135,3 +135,26 @@ class SessionStore:
         raw = await self.redis.lrange(key, offset, offset + limit - 1)
         entries = [(item.decode() if isinstance(item, bytes) else item) for item in raw]
         return entries, total
+
+    # ── Message Queue (user messages sent during a running task) ──
+
+    async def push_message(self, task_id: str, message: str) -> int:
+        """Queue a user message for a running task. Returns queue length."""
+        key = f"{self.TASK_PREFIX}{task_id}:messages"
+        pipe = self.redis.pipeline()
+        pipe.rpush(key, message)
+        pipe.expire(key, self.ttl)
+        results = await pipe.execute()
+        return results[0]  # RPUSH returns new list length
+
+    async def pop_message(self, task_id: str) -> Optional[str]:
+        """Pop the next queued message (FIFO). Returns None if empty."""
+        key = f"{self.TASK_PREFIX}{task_id}:messages"
+        raw = await self.redis.lpop(key)
+        if raw is None:
+            return None
+        return raw.decode() if isinstance(raw, bytes) else raw
+
+    async def message_count(self, task_id: str) -> int:
+        key = f"{self.TASK_PREFIX}{task_id}:messages"
+        return await self.redis.llen(key)

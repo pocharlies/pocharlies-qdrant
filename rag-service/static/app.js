@@ -615,7 +615,7 @@ async function startAgentTask() {
 }
 
 function _stepIcon(type) {
-  const m = { thinking: 'T', tool_call: '>', tool_result: '<', response: 'R' };
+  const m = { thinking: 'T', tool_call: '>', tool_result: '<', response: 'R', user_message: 'U' };
   return m[type] || '?';
 }
 
@@ -647,10 +647,20 @@ function _updateAgentModal(t) {
 
   renderAgentSteps(t.steps || []);
 
-  // Show resume form for completed/failed tasks
+  // Show message form for all task states (running = queued, completed/failed = continue)
   const resumeForm = document.getElementById('agent-resume-form');
   if (resumeForm) {
-    resumeForm.style.display = (t.status === 'completed' || t.status === 'failed') ? 'flex' : 'none';
+    resumeForm.style.display = 'flex';
+    const btn = document.getElementById('agent-resume-btn');
+    if (btn) {
+      btn.textContent = t.status === 'running' ? 'Send' : 'Continue';
+    }
+    const input = document.getElementById('agent-resume-input');
+    if (input) {
+      input.placeholder = t.status === 'running'
+        ? 'Send message to running agent (will be queued)...'
+        : 'Send follow-up message to continue...';
+    }
   }
 }
 
@@ -735,11 +745,12 @@ async function continueAgentTask() {
   const message = input.value.trim();
   if (!message) { input.focus(); return; }
 
+  const originalText = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Sending...';
 
   try {
-    const r = await fetch('/agent/task/' + _agentModalTaskId + '/continue', {
+    const r = await fetch('/agent/task/' + _agentModalTaskId + '/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
@@ -748,16 +759,22 @@ async function continueAgentTask() {
     if (!r.ok) throw new Error(d.detail || 'Failed');
 
     input.value = '';
-    document.getElementById('agent-resume-form').style.display = 'none';
 
-    // Reconnect SSE for the continued task
+    if (d.status === 'queued') {
+      // Message queued for running task — show confirmation, keep form visible
+      btn.textContent = 'Queued!';
+      setTimeout(() => { btn.textContent = 'Send'; btn.disabled = false; }, 1500);
+      return;
+    }
+
+    // Task was continued (completed/failed → running) — reconnect SSE
     viewAgentTask(_agentModalTaskId);
     fetchAgentTasks();
   } catch (e) {
     alert('Error: ' + e.message);
   }
   btn.disabled = false;
-  btn.textContent = 'Continue';
+  btn.textContent = originalText;
 }
 
 function copyAgentLogs() {

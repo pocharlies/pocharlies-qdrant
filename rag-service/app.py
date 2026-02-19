@@ -1159,27 +1159,47 @@ async def web_logs(job_id: str, offset: int = 0):
 
 @app.post("/products/sync")
 async def product_sync(request: ProductSyncRequest):
-    """Start a product catalog sync from Shopify."""
+    """Start a product catalog sync from Shopify (runs in background)."""
     if not shopify_client:
         raise HTTPException(
             status_code=400,
             detail="Shopify not configured. Set SHOPIFY_SHOP_DOMAIN and SHOPIFY_ACCESS_TOKEN.",
         )
 
+    import uuid as _uuid
+    job_id = _uuid.uuid4().hex[:12]
+
+    # Create a placeholder job so the frontend can poll immediately
+    placeholder = ProductSyncJob(
+        job_id=job_id,
+        sync_type=request.sync_type or "full",
+        status="running",
+        started_at=datetime.now(timezone.utc).isoformat(),
+    )
+    product_sync_jobs[job_id] = placeholder
+
     def progress_cb(j: ProductSyncJob):
         product_sync_jobs[j.job_id] = j
 
-    if request.sync_type == "incremental" and request.since:
-        job = await product_indexer.incremental_sync(
-            shopify_client, request.since, progress_callback=progress_cb
-        )
-    else:
-        job = await product_indexer.index_all_products(
-            shopify_client, progress_callback=progress_cb
-        )
+    async def _run_sync():
+        try:
+            if request.sync_type == "incremental" and request.since:
+                job = await product_indexer.incremental_sync(
+                    shopify_client, request.since, progress_callback=progress_cb
+                )
+            else:
+                job = await product_indexer.index_all_products(
+                    shopify_client, progress_callback=progress_cb
+                )
+            product_sync_jobs[job.job_id] = job
+        except Exception as e:
+            placeholder.status = "failed"
+            placeholder.errors.append(str(e)[:200])
+            placeholder.log(f"FAILED: {str(e)[:200]}")
 
-    product_sync_jobs[job.job_id] = job
-    return job.to_dict()
+    asyncio.create_task(_run_sync())
+
+    return {"job_id": job_id, "status": "running", "sync_type": placeholder.sync_type}
 
 
 @app.get("/products/sync/{job_id}")
@@ -1541,25 +1561,46 @@ async def create_agent_task(request: AgentTaskRequest):
     return {"task_id": task_id, "status": "running"}
 
 
-@app.post("/agent/task/{task_id}/continue")
-async def continue_agent_task(task_id: str, request: AgentContinueRequest):
-    """Send a follow-up message to continue a completed/failed agent session."""
+@app.post("/agent/task/{task_id}/message")
+async def send_agent_message(task_id: str, request: AgentContinueRequest):
+    """Send a message to an agent task.
+
+    - If the task is **running**: queues the message — it will be processed
+      automatically after the current agent run finishes.
+    - If the task is **completed/failed**: restarts the session with the
+      new message (like the old /continue endpoint).
+    """
     if not rag_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
     if not session_store or not redis_client:
         raise HTTPException(status_code=503, detail="Redis not available for session resume")
 
-    existing = await session_store.get_task(task_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail=f"Session not found: {task_id}")
-    if existing["status"] == "running":
-        raise HTTPException(status_code=409, detail="Task is still running")
-
     message = request.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Reopen the task
+    # Check in-memory first (running tasks), then Redis
+    mem_task = agent_tasks.get(task_id)
+    if mem_task and mem_task.status == "running":
+        # Task is running — queue the message for after current run
+        queue_len = await session_store.push_message(task_id, message)
+        mem_task.log(f"User message queued (position {queue_len}): {message[:200]}")
+        mem_task.add_step("user_message", f"[queued] {message}")
+        logger.info(f"Queued message for running task {task_id}: {message[:80]}")
+        return {"task_id": task_id, "status": "queued", "queue_position": queue_len}
+
+    # Task is not running in memory — check Redis
+    existing = await session_store.get_task(task_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Session not found: {task_id}")
+
+    if existing["status"] == "running":
+        # Running in Redis but not in memory (e.g. after restart) — queue it
+        queue_len = await session_store.push_message(task_id, message)
+        logger.info(f"Queued message for task {task_id} (Redis-only): {message[:80]}")
+        return {"task_id": task_id, "status": "queued", "queue_position": queue_len}
+
+    # Task is completed/failed — restart the session
     task = AgentTask(
         task_id=task_id,
         prompt=existing.get("prompt", ""),
@@ -1576,7 +1617,7 @@ async def continue_agent_task(task_id: str, request: AgentContinueRequest):
     session = RedisSession(task_id, redis_client)
     services = _make_services(task)
 
-    task.add_step("thinking", f"Continuing conversation: {message}")
+    task.add_step("user_message", message)
     task.log(f"Resume with: {message[:200]}")
 
     async def _run():
@@ -1587,6 +1628,12 @@ async def continue_agent_task(task_id: str, request: AgentContinueRequest):
     logger.info(f"Continued agent task {task_id}: {message[:80]}")
 
     return {"task_id": task_id, "status": "running", "continued": True}
+
+
+@app.post("/agent/task/{task_id}/continue")
+async def continue_agent_task(task_id: str, request: AgentContinueRequest):
+    """Legacy endpoint — redirects to /message. Kept for backwards compatibility."""
+    return await send_agent_message(task_id, request)
 
 
 @app.get("/agent/tasks")

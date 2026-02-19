@@ -1,6 +1,9 @@
 """
 Agent runner — executes agent tasks with streaming event tracking.
 Used by both FastAPI (background task) and CLI.
+
+Supports a message queue: if user sends messages while the agent is running,
+they are queued in Redis and automatically processed after the current run.
 """
 
 import logging
@@ -14,6 +17,44 @@ from . import AgentTask, AgentServices
 logger = logging.getLogger(__name__)
 
 
+async def _run_single(agent, services, prompt, max_turns, task, session):
+    """Execute a single agent run with streaming event tracking."""
+    run_kwargs = dict(
+        input=prompt,
+        context=services,
+        max_turns=max_turns,
+    )
+    if session:
+        run_kwargs["session"] = session
+
+    result = Runner.run_streamed(agent, **run_kwargs)
+
+    async for event in result.stream_events():
+        if event.type == "run_item_stream_event":
+            item = event.item
+            if item.type == "tool_call_item":
+                raw = getattr(item, 'raw_item', None)
+                tool_name = (
+                    getattr(item, 'name', None)
+                    or getattr(raw, 'name', None)
+                    or (raw.get('name') if isinstance(raw, dict) else None)
+                    or 'unknown'
+                )
+                task.add_step("tool_call", str(tool_name))
+                task.log(f"Tool call: {tool_name}")
+                if tool_name not in task.tools_called:
+                    task.tools_called.append(tool_name)
+            elif item.type == "tool_call_output_item":
+                output = str(getattr(item, 'output', ''))[:2000]
+                task.add_step("tool_result", output)
+            elif item.type == "message_output_item":
+                text = ItemHelpers.text_message_output(item)
+                task.add_step("response", text)
+                task.log(f"Agent response: {text[:300]}")
+
+    return result
+
+
 async def run_task(
     agent,
     services: AgentServices,
@@ -25,9 +66,9 @@ async def run_task(
 ) -> AgentTask:
     """Run an agent task with streaming event tracking.
 
-    Creates an AgentTask (or uses a pre-created one), runs the agent with
-    streaming, and populates the task with step/log data as events arrive.
-    Returns the completed task.
+    After the initial run completes, checks the message queue for any
+    user messages that arrived during execution. If found, automatically
+    continues the conversation with each queued message.
 
     Args:
         agent: The Agent instance to run.
@@ -64,44 +105,28 @@ async def run_task(
         except Exception as e:
             logger.warning(f"Redis update_task failed: {e}")
 
+    current_prompt = prompt
+
     try:
-        run_kwargs = dict(
-            input=prompt,
-            context=services,
-            max_turns=max_turns,
-        )
-        if session:
-            run_kwargs["session"] = session
+        while True:
+            result = await _run_single(agent, services, current_prompt, max_turns, task, session)
 
-        result = Runner.run_streamed(agent, **run_kwargs)
+            task.summary = result.final_output
+            task.log(f"Run finished: {task.summary[:300] if task.summary else 'No summary'}")
 
-        async for event in result.stream_events():
-            if event.type == "run_item_stream_event":
-                item = event.item
-                if item.type == "tool_call_item":
-                    # raw_item may be a ResponseFunctionToolCall object, not a dict
-                    raw = getattr(item, 'raw_item', None)
-                    tool_name = (
-                        getattr(item, 'name', None)
-                        or getattr(raw, 'name', None)
-                        or (raw.get('name') if isinstance(raw, dict) else None)
-                        or 'unknown'
-                    )
-                    task.add_step("tool_call", str(tool_name))
-                    task.log(f"Tool call: {tool_name}")
-                    if tool_name not in task.tools_called:
-                        task.tools_called.append(tool_name)
-                elif item.type == "tool_call_output_item":
-                    output = str(getattr(item, 'output', ''))[:2000]
-                    task.add_step("tool_result", output)
-                elif item.type == "message_output_item":
-                    text = ItemHelpers.text_message_output(item)
-                    task.add_step("response", text)
-                    task.log(f"Agent response: {text[:300]}")
+            # Check for queued user messages
+            if session_store:
+                next_msg = await session_store.pop_message(task.task_id)
+                if next_msg:
+                    task.log(f"Processing queued message: {next_msg[:200]}")
+                    task.add_step("user_message", next_msg)
+                    current_prompt = next_msg
+                    continue  # Run again with the queued message
 
-        task.summary = result.final_output
-        task.status = "completed"
-        task.log(f"COMPLETED: {task.summary[:300] if task.summary else 'No summary'}")
+            # No more queued messages — done
+            task.status = "completed"
+            task.log(f"COMPLETED: {task.summary[:300] if task.summary else 'No summary'}")
+            break
 
     except Exception as e:
         task.status = "failed"
