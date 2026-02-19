@@ -3,12 +3,12 @@ uvicorn==0.27.0
 qdrant-client>=1.12.0,<2.0.0
 sentence-transformers==2.3.1
 fastembed>=0.4.0
-openai==1.12.0
+openai>=2.9.0,<3
 gitpython==3.1.41
-pydantic==2.5.3
+pydantic>=2.5.3,<3
 python-dotenv==1.0.0
 aiofiles==23.2.1
-httpx==0.26.0
+httpx>=0.26.0
 beautifulsoup4==4.12.3
 trafilatura==1.8.1
 validators==0.22.0
@@ -16,3 +16,5 @@ curl_cffi>=0.7.0
 redis[hiredis]>=5.0.0
 PyMuPDF>=1.24.0
 langdetect>=1.0.9
+openai-agents>=0.7.0
+typer>=0.15.0

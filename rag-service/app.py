@@ -22,7 +22,8 @@ import validators
 from indexer import CodeIndexer
 from retriever import CodeRetriever, CodeTools, TOOL_DEFINITIONS
 from web_indexer import WebIndexer, CrawlJob
-from agent import AgentTask, run_agent_task
+from agent import AgentTask, AgentServices, create_agent
+from agent.runner import run_task
 from product_indexer import ProductIndexer, ProductSyncJob
 from product_classifier import ProductClassifier, ClassificationJob
 from translator import TranslationPipeline, TranslationJob
@@ -59,6 +60,8 @@ log_analyzer: LogAnalyzer = None
 shopify_client: ShopifyClient = None
 tools: CodeTools = None
 llm_client: OpenAI = None
+llm_model_id: str = None  # auto-discovered at startup
+rag_agent = None  # Agent SDK instance, created at startup
 
 # Active crawl jobs + queue
 crawl_jobs: Dict[str, CrawlJob] = {}
@@ -84,9 +87,9 @@ agent_tasks: Dict[str, AgentTask] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global retriever, indexer, web_indexer, competitor_indexer, tools, llm_client
+    global retriever, indexer, web_indexer, competitor_indexer, tools, llm_client, llm_model_id
     global product_indexer, product_classifier, translator
-    global devops_indexer, log_analyzer, shopify_client
+    global devops_indexer, log_analyzer, shopify_client, rag_agent
 
     logger.info("Initializing RAG service components...")
 
@@ -123,6 +126,18 @@ async def lifespan(app: FastAPI):
         api_key=LITELLM_API_KEY,
     )
 
+    # Auto-discover LLM model ID
+    try:
+        models = llm_client.models.list()
+        llm_model_id = models.data[0].id if models.data else None
+        if llm_model_id:
+            logger.info(f"LLM model discovered: {llm_model_id}")
+        else:
+            logger.warning("No LLM models available — chat/agent features will fail")
+    except Exception as e:
+        logger.warning(f"LLM model discovery failed: {e}")
+        llm_model_id = None
+
     # Shopify client (optional)
     if SHOPIFY_SHOP_DOMAIN and SHOPIFY_ACCESS_TOKEN:
         shopify_client = ShopifyClient(
@@ -146,6 +161,13 @@ async def lifespan(app: FastAPI):
         model=indexer.model,
     )
     log_analyzer = LogAnalyzer(llm_client=llm_client, devops_indexer=devops_indexer)
+
+    # Create SDK agent (after llm_client is ready)
+    try:
+        rag_agent, _model_id = create_agent(VLLM_BASE_URL, LITELLM_API_KEY)
+        logger.info(f"Agent SDK initialized with model: {_model_id}")
+    except Exception as e:
+        logger.warning(f"Agent SDK init failed (agent endpoints will fail): {e}")
 
     # Pre-load BM25 sparse encoder so first search is fast
     try:
@@ -211,7 +233,7 @@ class DeleteRepoRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     query: str
-    model: str = "qwen-coder"
+    model: Optional[str] = None  # auto-discovered at startup
     use_rag: bool = True
     use_tools: bool = True
     repo: Optional[str] = None
@@ -253,10 +275,6 @@ class AgentTaskRequest(BaseModel):
     prompt: str
 
 
-class AgentContextRequest(BaseModel):
-    message: str
-
-
 class ProductSyncRequest(BaseModel):
     sync_type: str = "full"  # "full" | "incremental"
     since: Optional[str] = None  # ISO timestamp for incremental
@@ -293,6 +311,8 @@ class TranslateRequest(BaseModel):
     texts: List[str]
     source_lang: str = "en"
     target_lang: str = "es"
+    use_rag: bool = False
+    resource_type: str = "product"
 
 
 class DevOpsIndexRequest(BaseModel):
@@ -496,48 +516,120 @@ async def get_tools():
 @app.post("/chat")
 async def chat_with_rag(request: ChatRequest):
     """Chat endpoint with RAG context injection and tool support."""
+    # Resolve model: use request model, or auto-discovered, or fail
+    model = request.model or llm_model_id
+    if not model:
+        raise HTTPException(status_code=503, detail="No LLM model available. Check LLM_BASE_URL configuration.")
+
     messages = []
 
-    system_prompt = """You are a senior software engineer assistant with access to the codebase through RAG context and tools.
+    system_prompt = """You are a knowledgeable assistant with access to indexed content from multiple sources:
+- **Product Catalog**: Products from the Shopify store (titles, descriptions, prices, brands)
+- **Web Pages**: Crawled website content from various indexed sites
+- **Competitor Products**: Product data from competitor stores
+- **Code Index**: Source code from indexed repositories
+- **DevOps Docs**: DevOps documentation and runbooks
 
 When answering:
-1. Always cite file paths when referencing code
-2. Use tools to verify information when uncertain
-3. Be precise about line numbers
-4. If context is insufficient, say what additional files you need
-
-Available tools: search_repo, read_file, list_files, run_command"""
+1. Use the provided RAG context to give factual, data-driven answers
+2. Cite sources (domain, product name, collection) when referencing specific data
+3. If comparing prices or products, present the data in a clear table or list
+4. If context is insufficient, say what data might be missing and suggest indexing more sources
+5. Be specific — use exact names, prices, and URLs from the context"""
 
     messages.append({"role": "system", "content": system_prompt})
 
     if request.use_rag:
-        try:
-            rag_results = retriever.retrieve(
-                query=request.query,
-                top_k=8,
-                repo_filter=request.repo
-            )
+        context_sections = []
 
-            if rag_results:
-                context_block = "\n\n".join([
-                    f"[{r.repo}/{r.path}#L{r.start_line}-{r.end_line}]\n```\n{r.text}\n```"
-                    for r in rag_results
+        # Search across ALL collections for relevant context
+        try:
+            # Product catalog
+            prod_results = product_indexer.search(query=request.query, top_k=5)
+            if prod_results:
+                prod_block = "\n".join([
+                    f"- **{r.get('title', 'Unknown')}** | Price: {r.get('price', 'N/A')} | Brand: {r.get('brand', 'N/A')} | {r.get('text', '')[:200]}"
+                    for r in prod_results
                 ])
-                messages.append({
-                    "role": "user",
-                    "content": f"RELEVANT CODE CONTEXT:\n{context_block}\n\nQUESTION: {request.query}"
-                })
-            else:
-                messages.append({"role": "user", "content": request.query})
+                context_sections.append(f"## Product Catalog Results\n{prod_block}")
         except Exception as e:
-            logger.warning(f"RAG retrieval failed, continuing without context: {e}")
-            messages.append({"role": "user", "content": request.query})
+            logger.warning(f"Product search failed in chat: {e}")
+
+        try:
+            # Web pages (crawled content)
+            web_results = web_indexer.search(query=request.query, top_k=5)
+            if web_results:
+                web_block = "\n".join([
+                    f"- [{r.get('title', 'Untitled')}]({r.get('url', '')}) ({r.get('domain', 'unknown')})\n  {r.get('text', '')[:300]}"
+                    for r in web_results
+                ])
+                context_sections.append(f"## Web Page Results\n{web_block}")
+        except Exception as e:
+            logger.warning(f"Web search failed in chat: {e}")
+
+        try:
+            # Competitor products
+            comp_results = competitor_indexer.search(query=request.query, top_k=5)
+            if comp_results:
+                comp_block = "\n".join([
+                    f"- [{r.get('title', 'Untitled')}]({r.get('url', '')}) ({r.get('domain', 'unknown')})\n  {r.get('text', '')[:300]}"
+                    for r in comp_results
+                ])
+                context_sections.append(f"## Competitor Store Results\n{comp_block}")
+        except Exception as e:
+            logger.warning(f"Competitor search failed in chat: {e}")
+
+        try:
+            # Code (only if query seems code-related)
+            code_keywords = {"code", "function", "class", "file", "bug", "error", "import", "def ", "api", "endpoint"}
+            if any(kw in request.query.lower() for kw in code_keywords) or request.repo:
+                code_results = retriever.retrieve(query=request.query, top_k=5, repo_filter=request.repo)
+                if code_results:
+                    code_block = "\n\n".join([
+                        f"[{r.repo}/{r.path}#L{r.start_line}-{r.end_line}]\n```\n{r.text}\n```"
+                        for r in code_results
+                    ])
+                    context_sections.append(f"## Code Results\n{code_block}")
+        except Exception as e:
+            logger.warning(f"Code search failed in chat: {e}")
+
+        try:
+            # DevOps docs
+            devops_keywords = {"deploy", "docker", "kubernetes", "k8s", "ci", "cd", "pipeline", "server", "nginx", "devops", "log", "monitor"}
+            if any(kw in request.query.lower() for kw in devops_keywords):
+                devops_results = devops_indexer.search(query=request.query, top_k=5)
+                if devops_results:
+                    devops_block = "\n".join([
+                        f"- {r.get('title', 'Untitled')}: {r.get('text', '')[:300]}"
+                        for r in devops_results
+                    ])
+                    context_sections.append(f"## DevOps Docs Results\n{devops_block}")
+        except Exception as e:
+            logger.warning(f"DevOps search failed in chat: {e}")
+
+        if context_sections:
+            full_context = "\n\n".join(context_sections)
+            messages.append({
+                "role": "user",
+                "content": f"Here is relevant context from indexed sources:\n\n{full_context}\n\n---\nQUESTION: {request.query}"
+            })
+        else:
+            messages.append({
+                "role": "user",
+                "content": f"No relevant indexed content found for this query.\n\nQUESTION: {request.query}"
+            })
     else:
         messages.append({"role": "user", "content": request.query})
 
+    # Log context stats for debugging
+    user_msg = messages[-1]["content"] if messages else ""
+    context_len = len(user_msg)
+    has_context = "RAG context" in user_msg or "indexed sources" in user_msg
+    logger.info(f"Chat: query='{request.query[:60]}', model={model}, context={context_len} chars, has_rag={has_context}")
+
     try:
         call_kwargs = {
-            "model": request.model,
+            "model": model,
             "messages": messages,
             "max_tokens": request.max_tokens,
             "temperature": 0.2
@@ -576,7 +668,7 @@ Available tools: search_repo, read_file, list_files, run_command"""
             messages.extend(tool_results)
 
             final_response = llm_client.chat.completions.create(
-                model=request.model,
+                model=model,
                 messages=messages,
                 max_tokens=request.max_tokens,
                 temperature=0.2
@@ -585,13 +677,13 @@ Available tools: search_repo, read_file, list_files, run_command"""
             return {
                 "response": final_response.choices[0].message.content,
                 "tools_used": [tc.function.name for tc in message.tool_calls],
-                "model": request.model
+                "model": model
             }
 
         return {
             "response": message.content,
             "tools_used": [],
-            "model": request.model
+            "model": model
         }
     except Exception as e:
         logger.error(f"Error in chat: {e}")
@@ -1212,11 +1304,30 @@ async def classify_resolve(request: EntityResolveRequest):
 
 @app.post("/translate/batch")
 async def translate_batch(request: TranslateRequest):
-    """Translate a list of texts."""
+    """Translate a list of texts, optionally with RAG context for terminology."""
+    rag_context = None
+
+    if request.use_rag and product_indexer is not None and request.texts:
+        try:
+            # Use the first text as the search query to find similar products
+            similar = product_indexer.search(query=request.texts[0], top_k=5)
+            if similar:
+                lines = []
+                for r in similar:
+                    title = r.get("title", "Unknown")
+                    brand = r.get("brand", "")
+                    text = r.get("text", "")[:200]
+                    lines.append(f"- {title} ({brand}): {text}")
+                rag_context = "\n".join(lines)
+                logger.info(f"RAG context built for translation: {len(similar)} similar products")
+        except Exception as e:
+            logger.warning(f"RAG context lookup failed, continuing without: {e}")
+
     job = await translator.translate_batch(
         texts=request.texts,
         source_lang=request.source_lang,
         target_lang=request.target_lang,
+        rag_context=rag_context,
     )
     translation_jobs[job.job_id] = job
 
@@ -1351,6 +1462,9 @@ async def create_agent_task(request: AgentTaskRequest):
     """Create and start a new agent task."""
     _cleanup_old_agent_tasks()
 
+    if not rag_agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized — LLM may be unavailable")
+
     prompt = request.prompt.strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
@@ -1361,10 +1475,23 @@ async def create_agent_task(request: AgentTaskRequest):
 
     import uuid
     task_id = uuid.uuid4().hex[:12]
-    task = AgentTask(task_id=task_id, prompt=prompt)
+    task = AgentTask(task_id=task_id, prompt=prompt, started_at=datetime.now(timezone.utc).isoformat())
     agent_tasks[task_id] = task
 
-    asyncio.create_task(run_agent_task(task, llm_client, web_indexer, retriever, product_indexer, devops_indexer, log_analyzer))
+    services = AgentServices(
+        web_indexer=web_indexer,
+        retriever=retriever,
+        product_indexer=product_indexer,
+        devops_indexer=devops_indexer,
+        log_analyzer=log_analyzer,
+        llm_client=llm_client,
+        task=task,
+    )
+
+    async def _run():
+        await run_task(rag_agent, services, prompt, task=task)
+
+    asyncio.create_task(_run())
     logger.info(f"Started agent task {task_id}: {prompt[:80]}")
 
     return {"task_id": task_id, "status": "running"}
@@ -1429,33 +1556,6 @@ async def agent_task_logs(task_id: str, offset: int = 0):
         "offset": offset,
         "status": task.status,
     }
-
-
-@app.post("/agent/task/{task_id}/stop")
-async def stop_agent_task(task_id: str):
-    task = agent_tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
-    if task.status != "running":
-        raise HTTPException(status_code=400, detail=f"Task is not running (status: {task.status})")
-    task._cancel_event.set()
-    task.log("Cancel requested by user")
-    return {"task_id": task_id, "status": "cancelling"}
-
-
-@app.post("/agent/task/{task_id}/context")
-async def inject_agent_context(task_id: str, request: AgentContextRequest):
-    task = agent_tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
-    if task.status != "running":
-        raise HTTPException(status_code=400, detail=f"Task is not running (status: {task.status})")
-    message = request.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-    await task._context_queue.put(message)
-    task.log(f"Context injected: {message[:200]}")
-    return {"task_id": task_id, "injected": True}
 
 
 if __name__ == "__main__":

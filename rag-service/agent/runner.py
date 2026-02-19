@@ -59,7 +59,14 @@ async def run_task(agent, services: AgentServices, prompt: str, max_turns: int =
             if event.type == "run_item_stream_event":
                 item = event.item
                 if item.type == "tool_call_item":
-                    tool_name = getattr(item, 'name', None) or getattr(item, 'raw_item', {}).get('name', 'unknown')
+                    # raw_item may be a ResponseFunctionToolCall object, not a dict
+                    raw = getattr(item, 'raw_item', None)
+                    tool_name = (
+                        getattr(item, 'name', None)
+                        or getattr(raw, 'name', None)
+                        or (raw.get('name') if isinstance(raw, dict) else None)
+                        or 'unknown'
+                    )
                     task.add_step("tool_call", str(tool_name))
                     task.log(f"Tool call: {tool_name}")
                     if tool_name not in task.tools_called:
