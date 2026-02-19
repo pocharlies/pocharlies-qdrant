@@ -638,11 +638,11 @@ async def _pocharlies_post(path: str, payload: dict, timeout: float = 30.0) -> d
         return resp.json()
 
 
-async def _pocharlies_get(path: str, timeout: float = 10.0) -> dict:
+async def _pocharlies_get(path: str, timeout: float = 10.0, params: Optional[Dict] = None) -> dict:
     """GET from pocharlies RAG service and return JSON response."""
     url = f"{POCHARLIES_RAG_URL}{path}"
     async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(url)
+        resp = await client.get(url, params=params)
         resp.raise_for_status()
         return resp.json()
 
@@ -1575,6 +1575,167 @@ async def collection_stats(
         return json.dumps({"error": _connect_error_msg()})
     except Exception as e:
         return json.dumps({"error": f"Stats failed: {str(e)[:300]}"})
+
+
+# ── 13. Jira Tickets ──────────────────────────────────────────────
+
+
+@mcp.tool()
+async def jira_search(
+    query: str,
+    ctx: Context[ServerSession, AppContext],
+    top_k: int = 8,
+    project: Optional[str] = None,
+    assignee: Optional[str] = None,
+    ticket_key: Optional[str] = None,
+    issue_type: Optional[str] = None,
+) -> str:
+    """Search indexed Jira tickets using hybrid search.
+    Filters: project (e.g. 'SHOP'), assignee, ticket_key (e.g. 'SHOP-123'), issue_type ('Bug', 'Story', 'Task', 'Epic').
+    Returns relevant ticket chunks with summaries, descriptions, and comments."""
+
+    await ctx.info(f"Jira search: '{query}' (top_k={top_k})...")
+
+    try:
+        params: Dict = {"query": query, "top_k": top_k}
+        if project:
+            params["project"] = project
+        if assignee:
+            params["assignee"] = assignee
+        if ticket_key:
+            params["ticket_key"] = ticket_key
+        if issue_type:
+            params["issue_type"] = issue_type
+
+        data = await _pocharlies_get("/jira/search", params=params)
+        return json.dumps({
+            "query": query,
+            "total_results": len(data.get("results", [])),
+            "results": data.get("results", []),
+        }, indent=2)
+
+    except httpx.ConnectError:
+        return json.dumps({"error": _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({"error": f"Jira search failed: {str(e)[:300]}"})
+
+
+@mcp.tool()
+async def jira_import_all(
+    ctx: Context[ServerSession, AppContext],
+    project: Optional[str] = None,
+) -> str:
+    """Import all Jira tickets into the vector index for semantic search.
+    Optionally filter by project key (e.g. 'SHOP'). This is a long-running operation.
+    Returns a job_id to check progress with jira_import_status."""
+
+    label = f" (project={project})" if project else ""
+    await ctx.info(f"Starting Jira import{label}...")
+
+    try:
+        payload: Dict = {}
+        if project:
+            payload["project"] = project
+
+        data = await _pocharlies_post("/jira/import", payload, timeout=600.0)
+        return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        return json.dumps({"error": _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({"error": f"Jira import failed: {str(e)[:300]}"})
+
+
+@mcp.tool()
+async def jira_import_status(
+    job_id: str,
+    ctx: Context[ServerSession, AppContext],
+) -> str:
+    """Check the status of a Jira import job. Pass the job_id returned by jira_import_all."""
+
+    try:
+        data = await _pocharlies_get(f"/jira/import/status/{job_id}")
+        return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        return json.dumps({"error": _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({"error": f"Jira import status check failed: {str(e)[:300]}"})
+
+
+@mcp.tool()
+async def jira_sync(
+    ctx: Context[ServerSession, AppContext],
+    since_hours: int = 24,
+) -> str:
+    """Sync recent Jira ticket changes into the vector index.
+    Fetches tickets updated in the last since_hours (default 24) and re-indexes them."""
+
+    await ctx.info(f"Syncing Jira changes from last {since_hours}h...")
+
+    try:
+        payload: Dict = {"since_hours": since_hours}
+        data = await _pocharlies_post("/jira/sync", payload, timeout=300.0)
+        return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        return json.dumps({"error": _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({"error": f"Jira sync failed: {str(e)[:300]}"})
+
+
+@mcp.tool()
+async def jira_sources(
+    ctx: Context[ServerSession, AppContext],
+) -> str:
+    """List all indexed Jira projects with ticket counts and last sync timestamps."""
+
+    try:
+        data = await _pocharlies_get("/jira/sources")
+        return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        return json.dumps({"error": _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({"error": f"Failed to list Jira sources: {str(e)[:300]}"})
+
+
+@mcp.tool()
+async def jira_delete_project(
+    project: str,
+    ctx: Context[ServerSession, AppContext],
+) -> str:
+    """Delete all indexed Jira data for a specific project key (e.g. 'SHOP')."""
+
+    try:
+        data = await _pocharlies_delete(f"/jira/source/{project}")
+        return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        return json.dumps({"error": _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({"error": f"Jira project delete failed: {str(e)[:300]}"})
+
+
+@mcp.tool()
+async def jira_ticket(
+    ticket_key: str,
+    ctx: Context[ServerSession, AppContext],
+) -> str:
+    """Fetch a live Jira ticket by key (e.g. 'SHOP-123') directly from the Jira API.
+    Returns the full ticket with summary, description, status, assignee, comments, and metadata.
+    This bypasses the index and always returns the latest data."""
+
+    await ctx.info(f"Fetching Jira ticket: {ticket_key}...")
+
+    try:
+        data = await _pocharlies_get(f"/jira/ticket/{ticket_key}")
+        return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        return json.dumps({"error": _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch Jira ticket: {str(e)[:300]}"})
 
 
 # ── Entry point ───────────────────────────────────────────────────
