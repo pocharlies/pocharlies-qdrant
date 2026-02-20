@@ -7,6 +7,7 @@ import os
 import json
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from contextlib import asynccontextmanager
@@ -18,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from openai import OpenAI
 import validators
+import httpx
 
 from indexer import CodeIndexer
 from retriever import CodeRetriever, CodeTools, TOOL_DEFINITIONS
@@ -28,8 +30,10 @@ from agent.redis_session import RedisSession
 from agent.session_store import SessionStore
 from product_indexer import ProductIndexer, ProductSyncJob
 from product_classifier import ProductClassifier, ClassificationJob
-from translator import TranslationPipeline, TranslationJob
+from translator import TranslationPipeline, TranslationJob, GlossaryStore, AIRSOFT_GLOSSARY_EN_ES
 from devops_indexer import DevOpsIndexer, LogAnalyzer, DevOpsIndexJob, LogAnalysisJob
+from jira_indexer import JiraIndexer, JiraImportJob
+from confluence_indexer import ConfluenceIndexer, ConfluenceImportJob
 from shopify_client import ShopifyClient
 from reranker import get_reranker, init_reranker
 
@@ -48,6 +52,13 @@ SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", "")
 SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
+JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "")
+JIRA_EMAIL = os.getenv("JIRA_EMAIL", "")
+JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN", "")
+JIRA_SYNC_ENABLED = os.getenv("JIRA_SYNC_ENABLED", "false").lower() == "true"
+JIRA_SYNC_HOUR = int(os.getenv("JIRA_SYNC_HOUR", "2"))
+CONFLUENCE_SYNC_ENABLED = os.getenv("CONFLUENCE_SYNC_ENABLED", "false").lower() == "true"
+CONFLUENCE_SYNC_HOUR = int(os.getenv("CONFLUENCE_SYNC_HOUR", "3"))
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # Global instances
@@ -58,8 +69,11 @@ competitor_indexer: WebIndexer = None
 product_indexer: ProductIndexer = None
 product_classifier: ProductClassifier = None
 translator: TranslationPipeline = None
+glossary_store: GlossaryStore = None
 devops_indexer: DevOpsIndexer = None
 log_analyzer: LogAnalyzer = None
+jira_indexer: JiraIndexer = None
+confluence_indexer: ConfluenceIndexer = None
 shopify_client: ShopifyClient = None
 tools: CodeTools = None
 llm_client: OpenAI = None
@@ -86,6 +100,12 @@ translation_jobs: Dict[str, TranslationJob] = {}
 devops_index_jobs: Dict[str, DevOpsIndexJob] = {}
 log_analysis_jobs: Dict[str, LogAnalysisJob] = {}
 
+# Jira import jobs
+jira_import_jobs: Dict[str, JiraImportJob] = {}
+
+# Confluence import jobs
+confluence_import_jobs: Dict[str, ConfluenceImportJob] = {}
+
 # Agent tasks
 agent_tasks: Dict[str, AgentTask] = {}
 
@@ -94,8 +114,8 @@ agent_tasks: Dict[str, AgentTask] = {}
 async def lifespan(app: FastAPI):
     global retriever, indexer, web_indexer, competitor_indexer, tools, llm_client, llm_model_id
     global product_indexer, product_classifier, translator
-    global devops_indexer, log_analyzer, shopify_client, rag_agent
-    global redis_client, session_store
+    global devops_indexer, log_analyzer, jira_indexer, confluence_indexer, shopify_client, rag_agent
+    global redis_client, session_store, glossary_store
 
     logger.info("Initializing RAG service components...")
 
@@ -158,7 +178,7 @@ async def lifespan(app: FastAPI):
         model=indexer.model,
         llm_client=llm_client,
     )
-    translator = TranslationPipeline(llm_client=llm_client)
+    # translator is initialized after Redis (needs glossary_store)
 
     # DevOps indexer + log analyzer
     devops_indexer = DevOpsIndexer(
@@ -168,6 +188,33 @@ async def lifespan(app: FastAPI):
     )
     log_analyzer = LogAnalyzer(llm_client=llm_client, devops_indexer=devops_indexer)
 
+    # Jira indexer (optional)
+    jira_indexer = JiraIndexer(
+        qdrant_url=QDRANT_URL,
+        qdrant_api_key=QDRANT_API_KEY,
+        model=indexer.model,
+        jira_base_url=JIRA_BASE_URL,
+        jira_email=JIRA_EMAIL,
+        jira_api_token=JIRA_API_TOKEN,
+    )
+    if jira_indexer.configured:
+        logger.info(f"Jira indexer configured for {JIRA_BASE_URL}")
+    else:
+        logger.info("Jira indexer: not configured (missing credentials)")
+
+    # Confluence indexer (optional — reuses Jira credentials if dedicated vars are empty)
+    confluence_indexer = ConfluenceIndexer(
+        qdrant_url=QDRANT_URL,
+        qdrant_api_key=QDRANT_API_KEY,
+        model=indexer.model,
+        llm_base_url=VLLM_BASE_URL,
+        llm_api_key=LITELLM_API_KEY,
+    )
+    if confluence_indexer.configured:
+        logger.info(f"Confluence indexer configured for {confluence_indexer._base_url}")
+    else:
+        logger.info("Confluence indexer: not configured (missing credentials)")
+
     # Create SDK agent (after llm_client is ready)
     try:
         rag_agent, _model_id = create_agent(VLLM_BASE_URL, LITELLM_API_KEY)
@@ -175,7 +222,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Agent SDK init failed (agent endpoints will fail): {e}")
 
-    # Redis for agent session persistence
+    # Redis for agent session persistence + glossary
     try:
         from redis.asyncio import Redis as AsyncRedis
         redis_client = AsyncRedis.from_url(REDIS_URL, decode_responses=False)
@@ -186,6 +233,13 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Redis connection failed ({e}) — agent sessions will not persist")
         redis_client = None
         session_store = None
+
+    # Translation glossary (Redis-backed for custom terms)
+    glossary_store = GlossaryStore(redis=redis_client)
+    if redis_client:
+        custom_terms = await glossary_store.load()
+        logger.info(f"Glossary loaded: {len(AIRSOFT_GLOSSARY_EN_ES)} built-in + {len(custom_terms)} custom terms")
+    translator = TranslationPipeline(llm_client=llm_client, glossary_store=glossary_store)
 
     # Pre-load BM25 sparse encoder so first search is fast
     try:
@@ -203,9 +257,71 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Reranker load failed (search will work without reranking): {e}")
 
+    # Nightly Jira sync scheduler
+    scheduler = None
+    if JIRA_SYNC_ENABLED and jira_indexer.configured:
+        try:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
+            from apscheduler.triggers.cron import CronTrigger
+
+            scheduler = AsyncIOScheduler()
+
+            async def _nightly_jira_sync():
+                try:
+                    logger.info("Nightly Jira sync starting...")
+                    job = await jira_indexer.sync_recent(since_hours=25)
+                    jira_import_jobs[job.job_id] = job
+                    logger.info(f"Nightly Jira sync done: {job.tickets_indexed} tickets, {job.chunks_indexed} chunks")
+                except Exception as e:
+                    logger.error(f"Nightly Jira sync failed: {e}")
+
+            scheduler.add_job(
+                _nightly_jira_sync,
+                CronTrigger(hour=JIRA_SYNC_HOUR, minute=0),
+                id="nightly_jira_sync",
+                replace_existing=True,
+            )
+            scheduler.start()
+            logger.info(f"Jira nightly sync scheduled at {JIRA_SYNC_HOUR}:00 UTC")
+        except Exception as e:
+            logger.warning(f"Failed to start Jira scheduler: {e}")
+
+    # Nightly Confluence sync scheduler
+    if CONFLUENCE_SYNC_ENABLED and confluence_indexer.configured:
+        try:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
+            from apscheduler.triggers.cron import CronTrigger
+
+            if scheduler is None:
+                scheduler = AsyncIOScheduler()
+                scheduler.start()
+
+            async def _nightly_confluence_sync():
+                try:
+                    logger.info("Nightly Confluence sync starting...")
+                    job = await confluence_indexer.sync_recent(since_hours=25)
+                    confluence_import_jobs[job.job_id] = job
+                    logger.info(f"Nightly Confluence sync done: {job.pages_indexed} pages, {job.chunks_indexed} chunks")
+                except Exception as e:
+                    logger.error(f"Nightly Confluence sync failed: {e}")
+
+            scheduler.add_job(
+                _nightly_confluence_sync,
+                CronTrigger(hour=CONFLUENCE_SYNC_HOUR, minute=0),
+                id="nightly_confluence_sync",
+                replace_existing=True,
+            )
+            logger.info(f"Confluence nightly sync scheduled at {CONFLUENCE_SYNC_HOUR}:00 UTC")
+        except Exception as e:
+            logger.warning(f"Failed to start Confluence scheduler: {e}")
+
     logger.info("RAG service initialized successfully")
 
     yield
+
+    # Shutdown scheduler
+    if scheduler:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(
@@ -280,12 +396,21 @@ class WebSearchRequest(BaseModel):
 class UnifiedSearchRequest(BaseModel):
     query: str
     top_k: int = 10
-    collection: str = "all"  # "all" | "web" | "code" | "products" | "competitors" | "devops"
+    collection: str = "all"  # "all" | "web" | "code" | "products" | "competitors" | "devops" | "jira" | "confluence"
     domain: Optional[str] = None
     repo: Optional[str] = None
     language: Optional[str] = None
     brand: Optional[str] = None
     category: Optional[str] = None
+    # Jira-specific filters
+    project: Optional[str] = None
+    assignee: Optional[str] = None
+    issue_type: Optional[str] = None
+    # Confluence-specific filters
+    space: Optional[str] = None
+    author: Optional[str] = None
+    department: Optional[str] = None
+    topic: Optional[str] = None
     rerank: bool = True
 
 
@@ -333,8 +458,17 @@ class TranslateRequest(BaseModel):
     texts: List[str]
     source_lang: str = "en"
     target_lang: str = "es"
-    use_rag: bool = False
+    use_rag: bool = True
     resource_type: str = "product"
+
+
+class GlossaryEntryRequest(BaseModel):
+    source: str
+    target: str
+
+
+class GlossaryBulkRequest(BaseModel):
+    entries: Dict[str, str]  # source_term -> target_term
 
 
 class DevOpsIndexRequest(BaseModel):
@@ -351,6 +485,30 @@ class DevOpsSearchRequest(BaseModel):
 class LogAnalyzeRequest(BaseModel):
     log_text: str
     service: str = "unknown"
+
+
+class JiraImportRequest(BaseModel):
+    project: Optional[str] = None
+
+
+class JiraSyncRequest(BaseModel):
+    since_hours: int = 24
+
+
+class ConfluenceImportRequest(BaseModel):
+    space: Optional[str] = None
+
+class ConfluenceSyncRequest(BaseModel):
+    since_hours: int = 24
+
+
+class JiraSearchRequest(BaseModel):
+    query: str = ""
+    top_k: int = 8
+    project: Optional[str] = None
+    assignee: Optional[str] = None
+    ticket_key: Optional[str] = None
+    issue_type: Optional[str] = None
 
 
 # ── Dashboard ─────────────────────────────────────────────────
@@ -412,13 +570,37 @@ async def health():
     except Exception:
         pass
 
-    # Get per-collection stats
+    # Get per-collection stats from all known collections
     collection_stats = {}
     if qdrant_ok:
         try:
             collection_stats = {c["name"]: c for c in web_indexer.get_collection_stats()}
         except Exception:
             pass
+        # Add collections from other indexers not covered by web_indexer
+        import httpx as _httpx2
+        headers2 = {}
+        if QDRANT_API_KEY:
+            headers2["api-key"] = QDRANT_API_KEY
+        all_colls_resp = resp.json().get("result", {}).get("collections", [])
+        for coll_info in all_colls_resp:
+            cname = coll_info.get("name", "")
+            if cname and cname not in collection_stats:
+                try:
+                    cr = _httpx2.get(f"{QDRANT_URL}/collections/{cname}", headers=headers2, timeout=3.0)
+                    if cr.status_code == 200:
+                        cdata = cr.json().get("result", {})
+                        vec_count = cdata.get("vectors_count")
+                        if vec_count is None:
+                            vec_count = cdata.get("indexed_vectors_count", 0)
+                        collection_stats[cname] = {
+                            "name": cname,
+                            "points_count": cdata.get("points_count", 0),
+                            "vectors_count": vec_count or 0,
+                            "status": cdata.get("status", "unknown"),
+                        }
+                except Exception:
+                    pass
 
     return {
         "status": "healthy" if qdrant_ok else "degraded",
@@ -437,6 +619,8 @@ async def health():
             "reranker": RERANKER_ENABLED and get_reranker() is not None,
             "shopify": shopify_client is not None,
             "devops_indexer": devops_indexer is not None,
+            "jira_indexer": jira_indexer is not None and jira_indexer.configured,
+            "confluence_indexer": confluence_indexer is not None and confluence_indexer.configured,
             "product_indexer": product_indexer is not None,
         },
     }
@@ -631,6 +815,34 @@ When answering:
                     context_sections.append(f"## DevOps Docs Results\n{devops_block}")
         except Exception as e:
             logger.warning(f"DevOps search failed in chat: {e}")
+
+        try:
+            # Jira tickets
+            jira_keywords = {"ticket", "jira", "bug", "task", "story", "sprint", "epic", "issue", "backlog"}
+            if any(kw in request.query.lower() for kw in jira_keywords):
+                jira_results = jira_indexer.search(query=request.query, top_k=5)
+                if jira_results:
+                    jira_block = "\n".join([
+                        f"- [{r.get('ticket_key', '')}] {r.get('summary', '')} ({r.get('status', '')}) — {r.get('text', '')[:300]}"
+                        for r in jira_results
+                    ])
+                    context_sections.append(f"## Jira Ticket Results\n{jira_block}")
+        except Exception as e:
+            logger.warning(f"Jira search failed in chat: {e}")
+
+        try:
+            # Confluence pages
+            confluence_keywords = {"confluence", "wiki", "page", "documentation", "docs", "knowledge", "onboarding", "process"}
+            if any(kw in request.query.lower() for kw in confluence_keywords):
+                conf_results = confluence_indexer.search(query=request.query, top_k=5)
+                if conf_results:
+                    conf_block = "\n".join([
+                        f"- [{r.get('page_title', '')}] ({r.get('space_key', '')}) — {r.get('text', '')[:300]}"
+                        for r in conf_results
+                    ])
+                    context_sections.append(f"## Confluence Page Results\n{conf_block}")
+        except Exception as e:
+            logger.warning(f"Confluence search failed in chat: {e}")
 
         if context_sections:
             full_context = "\n\n".join(context_sections)
@@ -1030,6 +1242,37 @@ async def unified_search(request: UnifiedSearchRequest):
         except Exception as e:
             logger.warning(f"DevOps search failed: {e}")
 
+    if request.collection in ("all", "jira"):
+        try:
+            jira_results = jira_indexer.search(
+                query=request.query,
+                top_k=request.top_k,
+                project=request.project,
+                assignee=request.assignee,
+                issue_type=request.issue_type,
+            )
+            for r in jira_results:
+                r["collection"] = "jira_tickets"
+            results.extend(jira_results)
+        except Exception as e:
+            logger.warning(f"Jira search failed: {e}")
+
+    if request.collection in ("all", "confluence"):
+        try:
+            conf_results = confluence_indexer.search(
+                query=request.query,
+                top_k=request.top_k,
+                space=request.space,
+                author=request.author,
+                department=request.department,
+                topic=request.topic,
+            )
+            for r in conf_results:
+                r["collection"] = "confluence_pages"
+            results.extend(conf_results)
+        except Exception as e:
+            logger.warning(f"Confluence search failed: {e}")
+
     if request.collection == "all" and results:
         results = _cross_collection_rrf(results, request.top_k)
 
@@ -1349,20 +1592,31 @@ async def classify_resolve(request: EntityResolveRequest):
 
 @app.post("/translate/batch")
 async def translate_batch(request: TranslateRequest):
-    """Translate a list of texts, optionally with RAG context for terminology."""
+    """Translate a list of texts with glossary + optional RAG context."""
     rag_context = None
 
     if request.use_rag and product_indexer is not None and request.texts:
         try:
-            # Use the first text as the search query to find similar products
-            similar = product_indexer.search(query=request.texts[0], top_k=5)
+            # Search for similar products to provide domain context
+            combined_query = " ".join(request.texts)[:500]
+            similar = product_indexer.search(query=combined_query, top_k=5)
             if similar:
                 lines = []
                 for r in similar:
                     title = r.get("title", "Unknown")
                     brand = r.get("brand", "")
-                    text = r.get("text", "")[:200]
-                    lines.append(f"- {title} ({brand}): {text}")
+                    category = r.get("category", "")
+                    # Include structured metadata for terminology reference
+                    parts = [f"Product: {title}"]
+                    if brand:
+                        parts.append(f"Brand: {brand}")
+                    if category:
+                        parts.append(f"Category: {category}")
+                    # Include a snippet of the description for context
+                    text = r.get("text", "")[:150]
+                    if text:
+                        parts.append(f"Description: {text}")
+                    lines.append(" | ".join(parts))
                 rag_context = "\n".join(lines)
                 logger.info(f"RAG context built for translation: {len(similar)} similar products")
         except Exception as e:
@@ -1396,6 +1650,57 @@ async def translate_status(job_id: str):
 async def translate_normalize(product: dict):
     """Normalize specs in a product dict."""
     return TranslationPipeline.normalize_specs(product)
+
+
+# ── Glossary Endpoints ────────────────────────────────────────
+
+
+@app.get("/glossary")
+async def glossary_list():
+    """List all glossary entries (built-in + custom)."""
+    custom = await glossary_store.get_all()
+    return {
+        "builtin_count": len(AIRSOFT_GLOSSARY_EN_ES),
+        "custom_count": len(custom),
+        "builtin": AIRSOFT_GLOSSARY_EN_ES,
+        "custom": custom,
+    }
+
+
+@app.post("/glossary")
+async def glossary_add(request: GlossaryEntryRequest):
+    """Add or update a custom glossary entry."""
+    if not request.source.strip() or not request.target.strip():
+        raise HTTPException(status_code=400, detail="Both source and target terms are required")
+    await glossary_store.add(request.source, request.target)
+    return {"status": "added", "source": request.source.strip().lower(), "target": request.target.strip()}
+
+
+@app.post("/glossary/bulk")
+async def glossary_bulk_add(request: GlossaryBulkRequest):
+    """Add multiple glossary entries at once."""
+    count = await glossary_store.add_bulk(request.entries)
+    return {"status": "added", "count": count}
+
+
+@app.delete("/glossary/{term:path}")
+async def glossary_delete(term: str):
+    """Remove a custom glossary entry."""
+    existed = await glossary_store.remove(term)
+    if not existed:
+        raise HTTPException(status_code=404, detail=f"Term not found: {term}")
+    return {"status": "deleted", "term": term}
+
+
+@app.get("/glossary/test")
+async def glossary_test(text: str, source_lang: str = "en", target_lang: str = "es"):
+    """Test which glossary terms would be matched for a given text."""
+    relevant = glossary_store.get_relevant(text, source_lang, target_lang)
+    return {
+        "text": text,
+        "matched_terms": len(relevant),
+        "glossary": relevant,
+    }
 
 
 # ── DevOps Endpoints ──────────────────────────────────────────
@@ -1467,6 +1772,289 @@ async def devops_log_analysis_result(job_id: str):
     return {
         **job.to_dict(),
         "results": job.results,
+    }
+
+
+# ── Jira Endpoints ────────────────────────────────────────────
+
+
+@app.post("/jira/import")
+async def jira_import(request: JiraImportRequest):
+    """Start importing Jira tickets (runs in background, returns job_id immediately)."""
+    if not jira_indexer or not jira_indexer.configured:
+        raise HTTPException(status_code=400, detail="Jira not configured. Set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.")
+
+    job_id = uuid.uuid4().hex[:12]
+
+    async def _run():
+        def progress_cb(j: JiraImportJob):
+            jira_import_jobs[j.job_id] = j
+        job = await jira_indexer.import_all(project=request.project, progress_callback=progress_cb, job_id=job_id)
+        jira_import_jobs[job.job_id] = job
+
+    asyncio.get_running_loop().create_task(_run())
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/jira/import/status/{job_id}")
+async def jira_import_status(job_id: str):
+    """Get Jira import job status."""
+    job = jira_import_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return job.to_dict()
+
+
+@app.post("/jira/sync")
+async def jira_sync(request: JiraSyncRequest):
+    """Sync recently updated Jira tickets (runs in background, returns job_id immediately)."""
+    if not jira_indexer or not jira_indexer.configured:
+        raise HTTPException(status_code=400, detail="Jira not configured.")
+
+    job_id = uuid.uuid4().hex[:12]
+
+    async def _run():
+        def progress_cb(j: JiraImportJob):
+            jira_import_jobs[j.job_id] = j
+        job = await jira_indexer.sync_recent(since_hours=request.since_hours, progress_callback=progress_cb, job_id=job_id)
+        jira_import_jobs[job.job_id] = job
+
+    asyncio.get_running_loop().create_task(_run())
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/jira/search")
+async def jira_search(
+    query: str = "",
+    top_k: int = 8,
+    project: Optional[str] = None,
+    assignee: Optional[str] = None,
+    ticket_key: Optional[str] = None,
+    issue_type: Optional[str] = None,
+):
+    """Search indexed Jira tickets."""
+    if not jira_indexer:
+        raise HTTPException(status_code=400, detail="Jira indexer not initialized.")
+
+    results = jira_indexer.search(
+        query=query,
+        top_k=top_k,
+        project=project,
+        assignee=assignee,
+        ticket_key=ticket_key,
+        issue_type=issue_type,
+    )
+    return {"results": results, "query": query}
+
+
+@app.get("/jira/sources")
+async def jira_sources():
+    """List indexed Jira projects with ticket/chunk counts."""
+    if not jira_indexer:
+        raise HTTPException(status_code=400, detail="Jira indexer not initialized.")
+    return {"sources": jira_indexer.get_sources()}
+
+
+@app.delete("/jira/source/{project}")
+async def jira_delete_project(project: str):
+    """Delete all indexed data for a Jira project."""
+    if not jira_indexer:
+        raise HTTPException(status_code=400, detail="Jira indexer not initialized.")
+    success = jira_indexer.delete_project(project)
+    if success:
+        return {"status": "deleted", "project": project}
+    raise HTTPException(status_code=500, detail=f"Failed to delete project: {project}")
+
+
+@app.get("/jira/filters")
+async def jira_filters():
+    """Return unique assignees and projects for search filter dropdowns."""
+    if not jira_indexer or not jira_indexer.configured:
+        return {"assignees": [], "projects": []}
+    return jira_indexer.get_filter_options()
+
+
+@app.get("/jira/status")
+async def jira_status():
+    """Get comprehensive Jira indexer status for the dashboard."""
+    configured = jira_indexer is not None and jira_indexer.configured
+    result = {
+        "configured": configured,
+        "base_url": jira_indexer._jira_base_url if configured else None,
+        "email": jira_indexer._jira_email if configured else None,
+        "nightly_sync_enabled": os.environ.get("JIRA_SYNC_ENABLED", "false").lower() == "true",
+        "nightly_sync_hour": int(os.environ.get("JIRA_SYNC_HOUR", "2")),
+    }
+
+    # Active/recent jobs
+    active_jobs = []
+    for j in jira_import_jobs.values():
+        active_jobs.append(j.to_dict())
+    # Sort by started_at descending, limit to 5
+    active_jobs.sort(key=lambda x: x.get("started_at", ""), reverse=True)
+    result["jobs"] = active_jobs[:5]
+
+    # Collection stats from Qdrant
+    if configured:
+        try:
+            sources = jira_indexer.get_sources()
+            result["sources"] = sources
+            result["total_tickets"] = sum(s.get("ticket_count", 0) for s in sources)
+            result["total_chunks"] = sum(s.get("chunk_count", 0) for s in sources)
+            # Find the latest last_indexed across all projects
+            last_times = [s.get("last_indexed") for s in sources if s.get("last_indexed")]
+            result["last_indexed"] = max(last_times) if last_times else None
+        except Exception:
+            result["sources"] = []
+            result["total_tickets"] = 0
+            result["total_chunks"] = 0
+            result["last_indexed"] = None
+
+    return result
+
+
+@app.get("/jira/ticket/{key}")
+async def jira_ticket_live(key: str):
+    """Fetch a ticket from Jira API (live, not from Qdrant index)."""
+    if not jira_indexer or not jira_indexer.configured:
+        raise HTTPException(status_code=400, detail="Jira not configured.")
+    try:
+        return await jira_indexer.get_ticket_live(key)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Jira API error: {e.response.text[:200]}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)[:200])
+
+
+# ── Confluence Endpoints ─────────────────────────────────────
+
+
+@app.post("/confluence/import")
+async def confluence_import(request: ConfluenceImportRequest):
+    """Start importing Confluence pages (runs in background)."""
+    if not confluence_indexer or not confluence_indexer.configured:
+        raise HTTPException(status_code=400, detail="Confluence not configured.")
+
+    job_id = uuid.uuid4().hex[:12]
+
+    async def _run():
+        def progress_cb(j: ConfluenceImportJob):
+            confluence_import_jobs[j.job_id] = j
+        job = await confluence_indexer.import_all(space=request.space, progress_callback=progress_cb, job_id=job_id)
+        confluence_import_jobs[job.job_id] = job
+
+    asyncio.get_running_loop().create_task(_run())
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/confluence/import/status/{job_id}")
+async def confluence_import_status(job_id: str):
+    """Get Confluence import job status."""
+    job = confluence_import_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job.to_dict()
+
+
+@app.post("/confluence/sync")
+async def confluence_sync(request: ConfluenceSyncRequest):
+    """Sync recently updated Confluence pages."""
+    if not confluence_indexer or not confluence_indexer.configured:
+        raise HTTPException(status_code=400, detail="Confluence not configured.")
+
+    job_id = uuid.uuid4().hex[:12]
+
+    async def _run():
+        def progress_cb(j: ConfluenceImportJob):
+            confluence_import_jobs[j.job_id] = j
+        job = await confluence_indexer.sync_recent(since_hours=request.since_hours, progress_callback=progress_cb, job_id=job_id)
+        confluence_import_jobs[job.job_id] = job
+
+    asyncio.get_running_loop().create_task(_run())
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/confluence/search")
+async def confluence_search(
+    query: str = "",
+    top_k: int = 10,
+    space: Optional[str] = None,
+    author: Optional[str] = None,
+    label: Optional[str] = None,
+    department: Optional[str] = None,
+    topic: Optional[str] = None,
+):
+    """Search indexed Confluence pages."""
+    if not confluence_indexer:
+        raise HTTPException(status_code=400, detail="Confluence indexer not initialized.")
+    results = confluence_indexer.search(
+        query=query, top_k=top_k, space=space, author=author,
+        label=label, department=department, topic=topic,
+    )
+    return {"results": results, "query": query, "collection": "confluence"}
+
+
+@app.get("/confluence/sources")
+async def confluence_sources():
+    """List indexed Confluence spaces with page/chunk counts."""
+    if not confluence_indexer:
+        return {"sources": []}
+    return {"sources": confluence_indexer.get_sources()}
+
+
+@app.delete("/confluence/source/{space_key}")
+async def confluence_delete_source(space_key: str):
+    """Delete all indexed data for a Confluence space."""
+    if not confluence_indexer:
+        raise HTTPException(status_code=400, detail="Confluence indexer not initialized.")
+    ok = confluence_indexer.delete_space(space_key)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Delete failed")
+    return {"deleted": space_key}
+
+
+@app.get("/confluence/filters")
+async def confluence_filters():
+    """Return unique spaces, authors, departments, and topics for search filters."""
+    if not confluence_indexer or not confluence_indexer.configured:
+        return {"spaces": [], "authors": [], "departments": [], "topics": []}
+    return confluence_indexer.get_filters()
+
+
+@app.get("/confluence/spaces")
+async def confluence_spaces():
+    """List available Confluence spaces (live from API)."""
+    if not confluence_indexer or not confluence_indexer.configured:
+        raise HTTPException(status_code=400, detail="Confluence not configured.")
+    spaces = await confluence_indexer.fetch_spaces()
+    return {"spaces": [{"key": s.get("key", ""), "name": s.get("name", ""), "type": s.get("type", "")} for s in spaces]}
+
+
+@app.get("/confluence/status")
+async def confluence_status():
+    """Get comprehensive Confluence indexer status for the dashboard."""
+    configured = confluence_indexer is not None and confluence_indexer.configured
+    sources = confluence_indexer.get_sources() if configured else []
+    total_pages = sum(s["page_count"] for s in sources)
+    total_chunks = sum(s["chunk_count"] for s in sources)
+    last_times = [s["last_indexed"] for s in sources if s.get("last_indexed")]
+    last_indexed = max(last_times) if last_times else None
+
+    active_jobs = []
+    for j in confluence_import_jobs.values():
+        active_jobs.append(j.to_dict())
+    active_jobs.sort(key=lambda x: x.get("started_at", ""), reverse=True)
+
+    return {
+        "configured": configured,
+        "base_url": confluence_indexer._base_url if configured else None,
+        "total_pages": total_pages,
+        "total_chunks": total_chunks,
+        "sources": sources,
+        "last_indexed": last_indexed,
+        "nightly_sync_enabled": CONFLUENCE_SYNC_ENABLED,
+        "nightly_sync_hour": CONFLUENCE_SYNC_HOUR,
+        "jobs": active_jobs[:5],
     }
 
 

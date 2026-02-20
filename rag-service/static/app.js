@@ -10,6 +10,50 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+// ── Lazy-load dropdown helper ─────────────────────────────────
+
+var _lazyLoaded = {};
+
+function lazyLoad(detailsEl, fetchFn) {
+  if (!detailsEl.open) return;
+  var key = detailsEl.getAttribute('data-lazy');
+  if (_lazyLoaded[key]) return;
+  _lazyLoaded[key] = true;
+  var hint = detailsEl.querySelector('.lazy-hint');
+  if (hint) hint.style.display = 'none';
+  fetchFn();
+}
+
+// Reset lazy flag so next open re-fetches
+function resetLazy(key) {
+  delete _lazyLoaded[key];
+}
+
+// ── Tab-based lazy loading ───────────────────────────────────
+
+var _tabLoaded = {};
+
+var _agentPollInterval = null;
+
+function onTabActivated(tabId) {
+  if (_tabLoaded[tabId]) return;
+  _tabLoaded[tabId] = true;
+  if (tabId === 'sources') {
+    fetchJiraStatus();
+    fetchConfluenceStatus();
+    fetchProductStats();
+  } else if (tabId === 'search') {
+    // no-op — search tab is ready, domains load via lazy dropdown
+  } else if (tabId === 'ai') {
+    checkAgentStatus();
+    fetchAgentTasks();
+    loadGlossary();
+    if (!_agentPollInterval) {
+      _agentPollInterval = setInterval(fetchAgentTasks, 10000);
+    }
+  }
+}
+
 // ── Qdrant Health ───────────────────────────────────────────
 
 async function fetchQdrantHealth() {
@@ -46,9 +90,12 @@ async function fetchRagCollections() {
   const el = document.getElementById('rag-collections');
   if (!el) return;
   try {
-    const r = await fetch('/web/collections');
+    // Use /health which includes ALL collections (web, products, jira, devops, etc.)
+    const r = await fetch('/health');
     const data = await r.json();
-    renderRagCollections(data.collections || []);
+    var colls = data.qdrant && data.qdrant.collections ? data.qdrant.collections : {};
+    var arr = Object.values(colls);
+    renderRagCollections(arr);
   } catch (e) {
     el.innerHTML = `<p class="muted">Collections unavailable: ${e.message}</p>`;
   }
@@ -360,26 +407,123 @@ async function resumeCrawlJob(jobId) {
 
 // ── Search ───────────────────────────────────────────────────
 
+var _searchFiltersLoaded = {};
+function onSearchCollectionChange(collection) {
+  var filtersRow = document.getElementById('search-filters');
+  var filters = filtersRow.querySelectorAll('.search-filter');
+  var anyVisible = false;
+
+  filters.forEach(function(el) {
+    var cols = (el.getAttribute('data-collections') || '').split(',');
+    if (cols.indexOf(collection) !== -1) {
+      el.style.display = '';
+      anyVisible = true;
+    } else {
+      el.style.display = 'none';
+    }
+  });
+
+  filtersRow.style.display = anyVisible ? 'flex' : 'none';
+
+  // Lazy-load filter options
+  if (collection === 'jira' && !_searchFiltersLoaded.jira) {
+    _searchFiltersLoaded.jira = true;
+    loadJiraSearchFilters();
+  }
+  if ((collection === 'web' || collection === 'competitors') && !_searchFiltersLoaded.domains) {
+    _searchFiltersLoaded.domains = true;
+    loadDomainFilters();
+  }
+  if (collection === 'confluence' && !_searchFiltersLoaded.confluence) {
+    _searchFiltersLoaded.confluence = true;
+    loadConfluenceSearchFilters();
+  }
+}
+
+async function loadJiraSearchFilters() {
+  try {
+    var r = await fetch('/jira/filters');
+    var d = await r.json();
+    var projSel = document.getElementById('rag-search-jira-project');
+    if (projSel && d.projects) {
+      d.projects.forEach(function(p) {
+        var opt = document.createElement('option');
+        opt.value = p; opt.textContent = p;
+        projSel.appendChild(opt);
+      });
+    }
+    var assignSel = document.getElementById('rag-search-jira-assignee');
+    if (assignSel && d.assignees) {
+      d.assignees.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a; opt.textContent = a;
+        assignSel.appendChild(opt);
+      });
+    }
+  } catch (e) { console.warn('Failed to load Jira search filters:', e); }
+}
+
+async function loadDomainFilters() {
+  try {
+    var r = await fetch('/web/sources');
+    var d = await r.json();
+    var sel = document.getElementById('rag-search-domain');
+    if (sel && d.sources) {
+      var domains = {};
+      d.sources.forEach(function(s) {
+        if (s.domain && !domains[s.domain]) {
+          domains[s.domain] = true;
+          var opt = document.createElement('option');
+          opt.value = s.domain; opt.textContent = s.domain;
+          sel.appendChild(opt);
+        }
+      });
+    }
+  } catch (e) { console.warn('Failed to load domain filters:', e); }
+}
+
 async function searchRag() {
   const queryInput = document.getElementById('rag-search-query');
   const collectionSelect = document.getElementById('rag-search-collection');
-  const domainSelect = document.getElementById('rag-search-domain');
   const topKInput = document.getElementById('rag-search-topk');
   const resultsEl = document.getElementById('rag-results');
 
   const query = queryInput.value.trim();
   if (!query) { queryInput.focus(); return; }
 
+  const collection = collectionSelect.value || 'all';
   resultsEl.innerHTML = '<p class="muted">Searching...</p>';
 
   try {
     const body = {
       query,
       top_k: parseInt(topKInput.value) || 10,
-      collection: collectionSelect.value || 'all',
+      collection: collection,
     };
-    const domain = domainSelect.value;
+
+    // Collection-specific filters
+    var domain = document.getElementById('rag-search-domain').value;
     if (domain) body.domain = domain;
+    var repo = document.getElementById('rag-search-repo').value.trim();
+    if (repo) body.repo = repo;
+    var brand = document.getElementById('rag-search-brand').value.trim();
+    if (brand) body.brand = brand;
+    var category = document.getElementById('rag-search-category').value.trim();
+    if (category) body.category = category;
+    var jiraProject = document.getElementById('rag-search-jira-project').value;
+    if (jiraProject) body.project = jiraProject;
+    var jiraAssignee = document.getElementById('rag-search-jira-assignee').value;
+    if (jiraAssignee) body.assignee = jiraAssignee;
+    var jiraType = document.getElementById('rag-search-jira-type').value;
+    if (jiraType) body.issue_type = jiraType;
+    var confSpace = document.getElementById('rag-search-confluence-space').value;
+    if (confSpace) body.space = confSpace;
+    var confAuthor = document.getElementById('rag-search-confluence-author').value;
+    if (confAuthor) body.author = confAuthor;
+    var confDept = document.getElementById('rag-search-confluence-department').value;
+    if (confDept) body.department = confDept;
+    var confTopic = document.getElementById('rag-search-confluence-topic').value;
+    if (confTopic) body.topic = confTopic;
 
     const r = await fetch('/search', {
       method: 'POST',
@@ -1160,8 +1304,15 @@ async function translateBatch() {
         target_lang: document.getElementById('translate-target').value,
       }),
     });
+    if (!r.ok) {
+      var ct = r.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        var err = await r.json();
+        throw new Error(err.detail || 'Server error ' + r.status);
+      }
+      throw new Error('Server error ' + r.status + ' — the service may be restarting, try again in a moment');
+    }
     var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Failed');
     if (d.job_id && d.status !== 'completed') {
       _pollTranslation(d.job_id, texts);
     } else {
@@ -1210,6 +1361,147 @@ function renderTranslations(originals, translations) {
     pair.appendChild(trans);
     el.appendChild(pair);
   });
+}
+
+// ── Glossary ────────────────────────────────────────────────
+
+var _glossaryData = { builtin: {}, custom: {} };
+
+async function loadGlossary() {
+  try {
+    var r = await fetch('/glossary');
+    var d = await r.json();
+    _glossaryData = d;
+    var stats = document.getElementById('glossary-stats');
+    if (stats) stats.textContent = d.builtin_count + ' built-in + ' + d.custom_count + ' custom terms';
+    filterGlossary();
+  } catch (e) {
+    var el = document.getElementById('glossary-list');
+    if (el) el.textContent = 'Failed to load glossary.';
+  }
+}
+
+function filterGlossary() {
+  var el = document.getElementById('glossary-list');
+  if (!el) return;
+  var search = (document.getElementById('glossary-search').value || '').toLowerCase();
+  var showBuiltin = document.getElementById('glossary-show-builtin').checked;
+  var showCustom = document.getElementById('glossary-show-custom').checked;
+
+  var rows = [];
+
+  // Custom entries first (editable)
+  if (showCustom) {
+    Object.keys(_glossaryData.custom || {}).forEach(function(k) {
+      var v = _glossaryData.custom[k];
+      if (search && k.indexOf(search) === -1 && v.toLowerCase().indexOf(search) === -1) return;
+      rows.push({ source: k, target: v, type: 'custom' });
+    });
+  }
+
+  // Built-in entries
+  if (showBuiltin) {
+    Object.keys(_glossaryData.builtin || {}).forEach(function(k) {
+      var v = _glossaryData.builtin[k];
+      if (search && k.indexOf(search) === -1 && v.toLowerCase().indexOf(search) === -1) return;
+      // Skip if overridden by custom
+      if (_glossaryData.custom && _glossaryData.custom[k]) return;
+      rows.push({ source: k, target: v, type: 'builtin' });
+    });
+  }
+
+  // Sort alphabetically
+  rows.sort(function(a, b) { return a.source.localeCompare(b.source); });
+
+  el.innerHTML = '';
+  if (!rows.length) {
+    el.innerHTML = '<p class="muted">No matching terms.</p>';
+    return;
+  }
+
+  // Render as compact table
+  var table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:.85rem';
+  rows.forEach(function(row) {
+    var tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid rgba(255,255,255,.06)';
+
+    var tdSource = document.createElement('td');
+    tdSource.style.cssText = 'padding:4px 8px;color:var(--text)';
+    tdSource.textContent = row.source;
+
+    var tdArrow = document.createElement('td');
+    tdArrow.style.cssText = 'padding:4px;color:var(--text-muted);text-align:center;width:30px';
+    tdArrow.textContent = '\u2192';
+
+    var tdTarget = document.createElement('td');
+    tdTarget.style.cssText = 'padding:4px 8px;color:var(--accent)';
+    tdTarget.textContent = row.target;
+
+    var tdType = document.createElement('td');
+    tdType.style.cssText = 'padding:4px 8px;width:70px;text-align:right';
+    if (row.type === 'custom') {
+      var badge = document.createElement('span');
+      badge.style.cssText = 'background:rgba(168,130,255,.2);color:#a882ff;padding:1px 6px;border-radius:4px;font-size:.75rem';
+      badge.textContent = 'custom';
+      tdType.appendChild(badge);
+    } else {
+      var badge2 = document.createElement('span');
+      badge2.style.cssText = 'background:rgba(255,255,255,.06);color:var(--text-muted);padding:1px 6px;border-radius:4px;font-size:.75rem';
+      badge2.textContent = 'built-in';
+      tdType.appendChild(badge2);
+    }
+
+    var tdActions = document.createElement('td');
+    tdActions.style.cssText = 'padding:4px;width:30px;text-align:center';
+    if (row.type === 'custom') {
+      var del = document.createElement('button');
+      del.style.cssText = 'background:none;border:none;color:#e55;cursor:pointer;font-size:.85rem;padding:2px 4px';
+      del.textContent = '\u00d7';
+      del.title = 'Delete';
+      del.onclick = (function(term) { return function() { deleteGlossaryEntry(term); }; })(row.source);
+      tdActions.appendChild(del);
+    }
+
+    tr.appendChild(tdSource);
+    tr.appendChild(tdArrow);
+    tr.appendChild(tdTarget);
+    tr.appendChild(tdType);
+    tr.appendChild(tdActions);
+    table.appendChild(tr);
+  });
+  el.appendChild(table);
+}
+
+async function addGlossaryEntry() {
+  var srcEl = document.getElementById('glossary-source');
+  var tgtEl = document.getElementById('glossary-target');
+  var src = srcEl.value.trim();
+  var tgt = tgtEl.value.trim();
+  if (!src || !tgt) { srcEl.focus(); return; }
+  try {
+    var r = await fetch('/glossary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: src, target: tgt }),
+    });
+    if (!r.ok) { var e = await r.json(); alert(e.detail || 'Failed'); return; }
+    srcEl.value = '';
+    tgtEl.value = '';
+    await loadGlossary();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteGlossaryEntry(term) {
+  try {
+    var r = await fetch('/glossary/' + encodeURIComponent(term), { method: 'DELETE' });
+    if (!r.ok) { var e = await r.json(); alert(e.detail || 'Failed'); return; }
+    await loadGlossary();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
 }
 
 // ── DevOps Docs ─────────────────────────────────────────────
@@ -1445,6 +1737,742 @@ async function searchCode() {
   }
 }
 
+// ── Jira Tickets ────────────────────────────────────────────
+
+let _jiraImportInterval = null;
+let _jiraStatusInterval = null;
+let _jiraBaseUrl = null;
+
+async function fetchJiraStatus() {
+  var badge = document.getElementById('jira-connection-badge');
+  var statsRow = document.getElementById('jira-stats-row');
+  if (!badge) return;
+  try {
+    var r = await fetch('/jira/status');
+    var d = await r.json();
+    var configured = d.configured;
+
+    // Store base URL for ticket links
+    if (d.base_url) _jiraBaseUrl = d.base_url;
+
+    // Connection badge
+    badge.innerHTML = '';
+    var dot = document.createElement('span');
+    dot.className = 'agent-status-dot ' + (configured ? 'online' : 'offline');
+    badge.appendChild(dot);
+    var label = document.createElement('span');
+    if (configured) {
+      label.textContent = d.base_url || 'Connected';
+      label.className = '';
+    } else {
+      label.textContent = 'Not configured';
+      label.className = 'muted';
+    }
+    badge.appendChild(label);
+
+    // Stats row
+    if (configured) {
+      statsRow.style.display = 'flex';
+      var projectCount = (d.sources || []).length;
+      document.getElementById('jira-stat-tickets').textContent = (d.total_tickets || 0).toLocaleString();
+      document.getElementById('jira-stat-chunks').textContent = (d.total_chunks || 0).toLocaleString();
+      document.getElementById('jira-stat-projects').textContent = projectCount;
+      var countBadge = document.getElementById('jira-sources-count');
+      if (countBadge) countBadge.textContent = '(' + projectCount + ')';
+
+      var lastEl = document.getElementById('jira-stat-last-indexed');
+      if (d.last_indexed) {
+        var dt = new Date(d.last_indexed);
+        var now = new Date();
+        var diffMs = now - dt;
+        var diffMin = Math.floor(diffMs / 60000);
+        if (diffMin < 1) lastEl.textContent = 'Just now';
+        else if (diffMin < 60) lastEl.textContent = diffMin + 'm ago';
+        else if (diffMin < 1440) lastEl.textContent = Math.floor(diffMin / 60) + 'h ago';
+        else lastEl.textContent = dt.toLocaleDateString();
+        lastEl.title = dt.toLocaleString();
+      } else {
+        lastEl.textContent = 'Never';
+        lastEl.title = '';
+      }
+
+      var nightlyEl = document.getElementById('jira-stat-nightly');
+      if (d.nightly_sync_enabled) {
+        nightlyEl.textContent = d.nightly_sync_hour + ':00 UTC';
+        nightlyEl.title = 'Nightly sync enabled';
+      } else {
+        nightlyEl.textContent = 'Off';
+        nightlyEl.title = 'Set JIRA_SYNC_ENABLED=true to enable';
+      }
+
+      // Show active jobs if any running
+      var activeJobs = (d.jobs || []).filter(function(j) { return j.status === 'running'; });
+      var jobsEl = document.getElementById('jira-active-jobs');
+      if (activeJobs.length) {
+        jobsEl.style.display = 'block';
+        jobsEl.innerHTML = '';
+        activeJobs.forEach(function(j) {
+          var row = document.createElement('div');
+          row.className = 'jira-active-job glass';
+          var st = document.createElement('span');
+          st.className = 'rag-status-badge running';
+          st.textContent = 'Running';
+          row.appendChild(st);
+          var info = document.createElement('span');
+          info.className = 'muted';
+          info.textContent = (j.tickets_indexed || 0) + '/' + (j.tickets_found || '?') + ' tickets, ' + (j.chunks_indexed || 0) + ' chunks';
+          row.appendChild(info);
+          jobsEl.appendChild(row);
+        });
+      } else {
+        jobsEl.style.display = 'none';
+      }
+      // Populate filter dropdowns
+      fetchJiraFilters();
+    } else {
+      statsRow.style.display = 'none';
+    }
+  } catch (e) {
+    badge.innerHTML = '';
+    var dotErr = document.createElement('span');
+    dotErr.className = 'agent-status-dot offline';
+    badge.appendChild(dotErr);
+    var msg = document.createElement('span');
+    msg.className = 'muted';
+    msg.textContent = 'Status unavailable';
+    badge.appendChild(msg);
+  }
+}
+
+var _jiraFiltersLoaded = false;
+async function fetchJiraFilters() {
+  if (_jiraFiltersLoaded) return;
+  try {
+    var r = await fetch('/jira/filters');
+    var d = await r.json();
+    _jiraFiltersLoaded = true;
+
+    var projSel = document.getElementById('jira-search-project');
+    if (projSel && d.projects) {
+      d.projects.forEach(function(p) {
+        var opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p;
+        projSel.appendChild(opt);
+      });
+    }
+
+    var assignSel = document.getElementById('jira-search-assignee');
+    if (assignSel && d.assignees) {
+      d.assignees.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a;
+        opt.textContent = a;
+        assignSel.appendChild(opt);
+      });
+    }
+  } catch (e) {
+    console.warn('Failed to load Jira filters:', e);
+  }
+}
+
+async function fetchJiraSources() {
+  var el = document.getElementById('jira-sources');
+  if (!el) return;
+  try {
+    var r = await fetch('/jira/sources');
+    var d = await r.json();
+    var sources = d.sources || [];
+    if (!sources.length) {
+      el.textContent = 'No Jira projects indexed yet.';
+      el.className = 'muted';
+      return;
+    }
+    el.textContent = '';
+    el.className = '';
+    var list = document.createElement('div');
+    list.className = 'rag-sources-list';
+    sources.forEach(function(s) {
+      var row = document.createElement('div');
+      row.className = 'rag-source-row glass';
+      var info = document.createElement('div');
+      info.className = 'rag-source-info';
+      var domain = document.createElement('span');
+      domain.className = 'rag-source-domain';
+      domain.textContent = s.project;
+      var meta = document.createElement('span');
+      meta.className = 'rag-source-meta';
+      var metaText = (s.ticket_count || 0) + ' tickets \u00b7 ' + (s.chunk_count || 0) + ' chunks';
+      if (s.last_indexed) metaText += ' \u00b7 Last indexed: ' + new Date(s.last_indexed).toLocaleString();
+      meta.textContent = metaText;
+      info.appendChild(domain);
+      info.appendChild(meta);
+      row.appendChild(info);
+      var btn = document.createElement('button');
+      btn.className = 'btn btn-danger-sm';
+      btn.textContent = 'Delete';
+      btn.onclick = function() { deleteJiraProject(s.project); };
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+    el.appendChild(list);
+  } catch (e) {
+    el.textContent = 'Sources unavailable: ' + e.message;
+    el.className = 'muted';
+  }
+}
+
+async function startJiraImport() {
+  var project = document.getElementById('jira-import-project').value.trim();
+  var btn = document.getElementById('jira-import-btn');
+  var syncBtn = document.getElementById('jira-sync-btn');
+  var progressEl = document.getElementById('jira-import-progress');
+  var barEl = document.getElementById('jira-progress-bar');
+  var infoEl = document.getElementById('jira-import-info');
+
+  btn.disabled = true;
+  btn.textContent = 'Importing...';
+  if (syncBtn) syncBtn.disabled = true;
+  progressEl.style.display = 'block';
+  barEl.style.width = '5%';
+  infoEl.textContent = 'Starting full import...';
+
+  try {
+    var body = {};
+    if (project) body.project = project;
+    var r = await fetch('/jira/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Import failed');
+    _pollJiraImport(d.job_id);
+  } catch (e) {
+    infoEl.textContent = 'Error: ' + e.message;
+    btn.disabled = false;
+    btn.textContent = 'Full Import';
+    if (syncBtn) syncBtn.disabled = false;
+  }
+}
+
+async function startJiraSync() {
+  var btn = document.getElementById('jira-import-btn');
+  var syncBtn = document.getElementById('jira-sync-btn');
+  var progressEl = document.getElementById('jira-import-progress');
+  var barEl = document.getElementById('jira-progress-bar');
+  var infoEl = document.getElementById('jira-import-info');
+
+  if (btn) btn.disabled = true;
+  if (syncBtn) { syncBtn.disabled = true; syncBtn.textContent = 'Syncing...'; }
+  progressEl.style.display = 'block';
+  barEl.style.width = '5%';
+  infoEl.textContent = 'Starting sync (last 24h)...';
+
+  try {
+    var r = await fetch('/jira/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since_hours: 24 }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Sync failed');
+    _pollJiraImport(d.job_id);
+  } catch (e) {
+    infoEl.textContent = 'Error: ' + e.message;
+    if (btn) btn.disabled = false;
+    if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = 'Sync Recent (24h)'; }
+  }
+}
+
+function _pollJiraImport(jobId) {
+  if (_jiraImportInterval) clearInterval(_jiraImportInterval);
+  var btn = document.getElementById('jira-import-btn');
+  var syncBtn = document.getElementById('jira-sync-btn');
+  _jiraImportInterval = setInterval(async function() {
+    try {
+      var r = await fetch('/jira/import/status/' + jobId);
+      if (r.status === 404) {
+        // Job not registered yet (background task still starting), wait
+        return;
+      }
+      var d = await r.json();
+      var barEl = document.getElementById('jira-progress-bar');
+      var infoEl = document.getElementById('jira-import-info');
+
+      var tickets = d.tickets_imported || d.tickets_indexed || 0;
+      var found = d.tickets_found || 0;
+      var chunks = d.chunks_indexed || 0;
+      var pct = found > 0 ? Math.round((tickets / found) * 100) : (d.status === 'running' ? 30 : 100);
+      barEl.style.width = Math.min(pct, 100) + '%';
+      var statusLabel = d.status === 'running' ? 'Importing' : d.status;
+      infoEl.textContent = statusLabel + ' \u2014 ' + tickets + '/' + found + ' tickets, ' + chunks + ' chunks';
+      if (d.errors && d.errors.length) {
+        infoEl.textContent += ' (' + d.errors.length + ' errors)';
+      }
+
+      // Also refresh the stats
+      fetchJiraStatus();
+
+      if (d.status === 'completed' || d.status === 'failed') {
+        clearInterval(_jiraImportInterval);
+        _jiraImportInterval = null;
+        btn.disabled = false;
+        btn.textContent = 'Full Import';
+        if (syncBtn) { syncBtn.disabled = false; }
+        if (d.status === 'completed') {
+          barEl.style.width = '100%';
+          infoEl.textContent = 'Complete: ' + tickets + ' tickets, ' + chunks + ' chunks indexed';
+          if (d.ended_at) {
+            infoEl.textContent += ' \u2014 ' + new Date(d.ended_at).toLocaleTimeString();
+          }
+        } else {
+          var lastErr = d.errors && d.errors.length ? d.errors[d.errors.length - 1] : 'Unknown error';
+          infoEl.textContent = 'Failed: ' + lastErr;
+        }
+        fetchJiraSources();
+        fetchRagCollections();
+      }
+    } catch (_e) { /* ignore */ }
+  }, 3000);
+}
+
+async function deleteJiraProject(project) {
+  if (!confirm('Delete all indexed tickets from project ' + project + '?')) return;
+  try {
+    var r = await fetch('/jira/source/' + encodeURIComponent(project), { method: 'DELETE' });
+    if (!r.ok) throw new Error('Delete failed');
+    fetchJiraSources();
+    fetchJiraStatus();
+    fetchRagCollections();
+  } catch (e) {
+    alert('Failed to delete: ' + e.message);
+  }
+}
+
+async function searchJira() {
+  var queryEl = document.getElementById('jira-search-query');
+  var query = queryEl.value.trim();
+  if (!query) { queryEl.focus(); return; }
+  var project = document.getElementById('jira-search-project').value.trim();
+  var assignee = document.getElementById('jira-search-assignee').value.trim();
+  var issueType = document.getElementById('jira-search-type').value;
+  var el = document.getElementById('jira-results');
+
+  el.textContent = 'Searching...';
+  el.className = 'muted';
+
+  try {
+    var params = new URLSearchParams({ query: query, top_k: '10' });
+    if (project) params.set('project', project);
+    if (assignee) params.set('assignee', assignee);
+    if (issueType) params.set('issue_type', issueType);
+
+    var r = await fetch('/jira/search?' + params.toString());
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Search failed');
+    renderJiraResults(d.results || []);
+  } catch (e) {
+    el.textContent = 'Search failed: ' + e.message;
+    el.className = 'muted';
+  }
+}
+
+function renderJiraResults(results) {
+  var el = document.getElementById('jira-results');
+  el.textContent = '';
+  el.className = '';
+  if (!results.length) {
+    el.textContent = 'No results found.';
+    el.className = 'muted';
+    return;
+  }
+  results.forEach(function(r, i) {
+    var score = (r.score * 100).toFixed(1) + '%';
+    var statusClass = r.status === 'Done' ? 'active'
+      : r.status === 'In Progress' ? 'running'
+      : r.status === 'To Do' ? 'inactive' : 'inactive';
+    var meta = [];
+    if (r.status) meta.push(r.status);
+    if (r.assignee) meta.push(r.assignee);
+    if (r.issue_type) meta.push(r.issue_type);
+    if (r.project) meta.push(r.project);
+
+    var card = document.createElement('div');
+    card.className = 'rag-result-card glass';
+
+    var header = document.createElement('div');
+    header.className = 'rag-result-header';
+
+    var rank = document.createElement('span');
+    rank.className = 'rag-result-rank';
+    rank.textContent = '#' + (i + 1);
+
+    var badge = document.createElement('span');
+    badge.className = 'collection-badge jira';
+    badge.textContent = 'JIRA';
+
+    var key;
+    if (_jiraBaseUrl && r.ticket_key) {
+      key = document.createElement('a');
+      key.href = _jiraBaseUrl + '/browse/' + r.ticket_key;
+      key.target = '_blank';
+      key.rel = 'noopener';
+    } else {
+      key = document.createElement('span');
+    }
+    key.className = 'jira-ticket-key';
+    key.textContent = r.ticket_key || '';
+
+    var title = document.createElement('span');
+    title.className = 'rag-result-title';
+    title.style.flex = '1';
+    title.textContent = r.summary || '';
+
+    var statusBadge = document.createElement('span');
+    statusBadge.className = 'rag-status-badge ' + statusClass;
+    statusBadge.textContent = r.status || '';
+
+    var scoreEl = document.createElement('span');
+    scoreEl.className = 'rag-result-score';
+    scoreEl.textContent = score;
+
+    header.appendChild(rank);
+    header.appendChild(badge);
+    header.appendChild(key);
+    header.appendChild(title);
+    header.appendChild(statusBadge);
+    header.appendChild(scoreEl);
+    card.appendChild(header);
+
+    if (r.text) {
+      var text = document.createElement('div');
+      text.className = 'rag-result-text';
+      text.textContent = r.text.length > 400 ? r.text.slice(0, 400) + '...' : r.text;
+      card.appendChild(text);
+    }
+
+    if (meta.length) {
+      var metaEl = document.createElement('div');
+      metaEl.className = 'rag-result-meta';
+      metaEl.textContent = meta.join(' \u00b7 ');
+      card.appendChild(metaEl);
+    }
+
+    el.appendChild(card);
+  });
+}
+
+// ── Confluence Pages ─────────────────────────────────────────
+
+let _confluenceImportInterval = null;
+let _confluenceBaseUrl = null;
+
+async function fetchConfluenceStatus() {
+  var badge = document.getElementById('confluence-connection-badge');
+  var statsRow = document.getElementById('confluence-stats-row');
+  if (!badge) return;
+  try {
+    var r = await fetch('/confluence/status');
+    var d = await r.json();
+    var configured = d.configured;
+
+    if (d.base_url) _confluenceBaseUrl = d.base_url;
+
+    badge.innerHTML = '';
+    var dot = document.createElement('span');
+    dot.className = 'agent-status-dot ' + (configured ? 'online' : 'offline');
+    badge.appendChild(dot);
+    var label = document.createElement('span');
+    if (configured) {
+      label.textContent = d.base_url || 'Connected';
+      label.className = '';
+    } else {
+      label.textContent = 'Not configured';
+      label.className = 'muted';
+    }
+    badge.appendChild(label);
+
+    if (configured) {
+      statsRow.style.display = 'flex';
+      var spaceCount = (d.sources || []).length;
+      document.getElementById('confluence-stat-pages').textContent = (d.total_pages || 0).toLocaleString();
+      document.getElementById('confluence-stat-chunks').textContent = (d.total_chunks || 0).toLocaleString();
+      document.getElementById('confluence-stat-spaces').textContent = spaceCount;
+      var countBadge = document.getElementById('confluence-sources-count');
+      if (countBadge) countBadge.textContent = '(' + spaceCount + ')';
+
+      var lastEl = document.getElementById('confluence-stat-last-indexed');
+      if (d.last_indexed) {
+        var dt = new Date(d.last_indexed);
+        var now = new Date();
+        var diffMs = now - dt;
+        var diffMin = Math.floor(diffMs / 60000);
+        if (diffMin < 1) lastEl.textContent = 'Just now';
+        else if (diffMin < 60) lastEl.textContent = diffMin + 'm ago';
+        else if (diffMin < 1440) lastEl.textContent = Math.floor(diffMin / 60) + 'h ago';
+        else lastEl.textContent = dt.toLocaleDateString();
+        lastEl.title = dt.toLocaleString();
+      } else {
+        lastEl.textContent = 'Never';
+        lastEl.title = '';
+      }
+
+      var nightlyEl = document.getElementById('confluence-stat-nightly');
+      if (d.nightly_sync_enabled) {
+        nightlyEl.textContent = d.nightly_sync_hour + ':00 UTC';
+        nightlyEl.title = 'Nightly sync enabled';
+      } else {
+        nightlyEl.textContent = 'Off';
+        nightlyEl.title = 'Set CONFLUENCE_SYNC_ENABLED=true to enable';
+      }
+
+      // Show active jobs if any running
+      var activeJobs = (d.jobs || []).filter(function(j) { return j.status === 'running'; });
+      var jobsEl = document.getElementById('confluence-active-jobs');
+      if (activeJobs.length) {
+        jobsEl.style.display = 'block';
+        jobsEl.innerHTML = '';
+        activeJobs.forEach(function(j) {
+          var row = document.createElement('div');
+          row.className = 'jira-active-job glass';
+          var st = document.createElement('span');
+          st.className = 'rag-status-badge running';
+          st.textContent = 'Running';
+          row.appendChild(st);
+          var info = document.createElement('span');
+          info.className = 'muted';
+          info.textContent = (j.pages_indexed || 0) + '/' + (j.pages_found || '?') + ' pages, ' + (j.chunks_indexed || 0) + ' chunks';
+          row.appendChild(info);
+          jobsEl.appendChild(row);
+        });
+      } else {
+        jobsEl.style.display = 'none';
+      }
+    } else {
+      statsRow.style.display = 'none';
+    }
+  } catch (e) {
+    badge.innerHTML = '';
+    var dotErr = document.createElement('span');
+    dotErr.className = 'agent-status-dot offline';
+    badge.appendChild(dotErr);
+    var msg = document.createElement('span');
+    msg.className = 'muted';
+    msg.textContent = 'Status unavailable';
+    badge.appendChild(msg);
+  }
+}
+
+async function fetchConfluenceSources() {
+  var el = document.getElementById('confluence-sources');
+  if (!el) return;
+  try {
+    var r = await fetch('/confluence/sources');
+    var d = await r.json();
+    var sources = d.sources || [];
+    if (!sources.length) {
+      el.textContent = 'No Confluence spaces indexed yet.';
+      el.className = 'muted';
+      return;
+    }
+    el.textContent = '';
+    el.className = '';
+    var list = document.createElement('div');
+    list.className = 'rag-sources-list';
+    sources.forEach(function(s) {
+      var row = document.createElement('div');
+      row.className = 'rag-source-row glass';
+      var info = document.createElement('div');
+      info.className = 'rag-source-info';
+      var domain = document.createElement('span');
+      domain.className = 'rag-source-domain';
+      domain.textContent = s.space;
+      var meta = document.createElement('span');
+      meta.className = 'rag-source-meta';
+      var metaText = (s.page_count || 0) + ' pages \u00b7 ' + (s.chunk_count || 0) + ' chunks';
+      if (s.last_indexed) metaText += ' \u00b7 Last indexed: ' + new Date(s.last_indexed).toLocaleString();
+      meta.textContent = metaText;
+      info.appendChild(domain);
+      info.appendChild(meta);
+      row.appendChild(info);
+      var btn = document.createElement('button');
+      btn.className = 'btn btn-danger-sm';
+      btn.textContent = 'Delete';
+      btn.onclick = function() { deleteConfluenceSpace(s.space); };
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+    el.appendChild(list);
+  } catch (e) {
+    el.textContent = 'Sources unavailable: ' + e.message;
+    el.className = 'muted';
+  }
+}
+
+async function startConfluenceImport() {
+  var space = document.getElementById('confluence-import-space').value.trim();
+  var btn = document.getElementById('confluence-import-btn');
+  var syncBtn = document.getElementById('confluence-sync-btn');
+  var progressEl = document.getElementById('confluence-import-progress');
+  var barEl = document.getElementById('confluence-progress-bar');
+  var infoEl = document.getElementById('confluence-import-info');
+
+  btn.disabled = true;
+  btn.textContent = 'Importing...';
+  if (syncBtn) syncBtn.disabled = true;
+  progressEl.style.display = 'block';
+  barEl.style.width = '5%';
+  infoEl.textContent = 'Starting full import...';
+
+  try {
+    var body = {};
+    if (space) body.space = space;
+    var r = await fetch('/confluence/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Import failed');
+    _pollConfluenceImport(d.job_id);
+  } catch (e) {
+    infoEl.textContent = 'Error: ' + e.message;
+    btn.disabled = false;
+    btn.textContent = 'Full Import';
+    if (syncBtn) syncBtn.disabled = false;
+  }
+}
+
+async function startConfluenceSync() {
+  var btn = document.getElementById('confluence-import-btn');
+  var syncBtn = document.getElementById('confluence-sync-btn');
+  var progressEl = document.getElementById('confluence-import-progress');
+  var barEl = document.getElementById('confluence-progress-bar');
+  var infoEl = document.getElementById('confluence-import-info');
+
+  if (btn) btn.disabled = true;
+  if (syncBtn) { syncBtn.disabled = true; syncBtn.textContent = 'Syncing...'; }
+  progressEl.style.display = 'block';
+  barEl.style.width = '5%';
+  infoEl.textContent = 'Starting sync (last 24h)...';
+
+  try {
+    var r = await fetch('/confluence/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since_hours: 24 }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Sync failed');
+    _pollConfluenceImport(d.job_id);
+  } catch (e) {
+    infoEl.textContent = 'Error: ' + e.message;
+    if (btn) btn.disabled = false;
+    if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = 'Sync Recent (24h)'; }
+  }
+}
+
+function _pollConfluenceImport(jobId) {
+  if (_confluenceImportInterval) clearInterval(_confluenceImportInterval);
+  var btn = document.getElementById('confluence-import-btn');
+  var syncBtn = document.getElementById('confluence-sync-btn');
+  _confluenceImportInterval = setInterval(async function() {
+    try {
+      var r = await fetch('/confluence/import/status/' + jobId);
+      if (r.status === 404) return;
+      var d = await r.json();
+      var barEl = document.getElementById('confluence-progress-bar');
+      var infoEl = document.getElementById('confluence-import-info');
+
+      var pages = d.pages_imported || d.pages_indexed || 0;
+      var found = d.pages_found || 0;
+      var chunks = d.chunks_indexed || 0;
+      var pct = found > 0 ? Math.round((pages / found) * 100) : (d.status === 'running' ? 30 : 100);
+      barEl.style.width = Math.min(pct, 100) + '%';
+      var statusLabel = d.status === 'running' ? 'Importing' : d.status;
+      infoEl.textContent = statusLabel + ' \u2014 ' + pages + '/' + found + ' pages, ' + chunks + ' chunks';
+      if (d.errors && d.errors.length) {
+        infoEl.textContent += ' (' + d.errors.length + ' errors)';
+      }
+
+      fetchConfluenceStatus();
+
+      if (d.status === 'completed' || d.status === 'failed') {
+        clearInterval(_confluenceImportInterval);
+        _confluenceImportInterval = null;
+        btn.disabled = false;
+        btn.textContent = 'Full Import';
+        if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = 'Sync Recent (24h)'; }
+        if (d.status === 'completed') {
+          barEl.style.width = '100%';
+          infoEl.textContent = 'Complete: ' + pages + ' pages, ' + chunks + ' chunks indexed';
+          if (d.ended_at) {
+            infoEl.textContent += ' \u2014 ' + new Date(d.ended_at).toLocaleTimeString();
+          }
+        } else {
+          var lastErr = d.errors && d.errors.length ? d.errors[d.errors.length - 1] : 'Unknown error';
+          infoEl.textContent = 'Failed: ' + lastErr;
+        }
+        fetchConfluenceSources();
+        fetchRagCollections();
+      }
+    } catch (_e) { /* ignore */ }
+  }, 3000);
+}
+
+async function deleteConfluenceSpace(space) {
+  if (!confirm('Delete all indexed pages from space ' + space + '?')) return;
+  try {
+    var r = await fetch('/confluence/source/' + encodeURIComponent(space), { method: 'DELETE' });
+    if (!r.ok) throw new Error('Delete failed');
+    fetchConfluenceSources();
+    fetchConfluenceStatus();
+    fetchRagCollections();
+  } catch (e) {
+    alert('Failed to delete: ' + e.message);
+  }
+}
+
+async function loadConfluenceSearchFilters() {
+  try {
+    var r = await fetch('/confluence/filters');
+    var d = await r.json();
+    var spaceSel = document.getElementById('rag-search-confluence-space');
+    if (spaceSel && d.spaces) {
+      d.spaces.forEach(function(s) {
+        var opt = document.createElement('option');
+        opt.value = s; opt.textContent = s;
+        spaceSel.appendChild(opt);
+      });
+    }
+    var authorSel = document.getElementById('rag-search-confluence-author');
+    if (authorSel && d.authors) {
+      d.authors.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a; opt.textContent = a;
+        authorSel.appendChild(opt);
+      });
+    }
+    var deptSel = document.getElementById('rag-search-confluence-department');
+    if (deptSel && d.departments) {
+      d.departments.forEach(function(dep) {
+        var opt = document.createElement('option');
+        opt.value = dep; opt.textContent = dep;
+        deptSel.appendChild(opt);
+      });
+    }
+    var topicSel = document.getElementById('rag-search-confluence-topic');
+    if (topicSel && d.topics) {
+      d.topics.forEach(function(t) {
+        var opt = document.createElement('option');
+        opt.value = t; opt.textContent = t;
+        topicSel.appendChild(opt);
+      });
+    }
+  } catch (e) { console.warn('Failed to load Confluence search filters:', e); }
+}
+
 // ── Chat with RAG ───────────────────────────────────────────
 
 async function sendChat() {
@@ -1518,17 +2546,48 @@ async function sendChat() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// ── Tabs ─────────────────────────────────────────────────────
+
+function initTabs() {
+  var buttons = document.querySelectorAll('.tab-btn[data-tab]');
+  var panes = document.querySelectorAll('.tab-pane[data-tab]');
+
+  function switchTab(tabId) {
+    buttons.forEach(function(btn) {
+      var active = btn.getAttribute('data-tab') === tabId;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    panes.forEach(function(pane) {
+      pane.classList.toggle('active', pane.getAttribute('data-tab') === tabId);
+    });
+    try { localStorage.setItem('rag-active-tab', tabId); } catch (_e) { /* ignore */ }
+    history.replaceState(null, '', '#' + tabId);
+    onTabActivated(tabId);
+  }
+
+  buttons.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      switchTab(btn.getAttribute('data-tab'));
+    });
+  });
+
+  // Restore from URL hash or localStorage
+  var hash = location.hash.replace('#', '');
+  var validTabs = Array.from(panes).map(function(p) { return p.getAttribute('data-tab'); });
+  var saved = null;
+  try { saved = localStorage.getItem('rag-active-tab'); } catch (_e) { /* ignore */ }
+  var initial = validTabs.indexOf(hash) >= 0 ? hash
+    : (saved && validTabs.indexOf(saved) >= 0 ? saved : 'sources');
+  switchTab(initial);
+}
+
 // ── Auto-load on page init ───────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', function() {
+  initTabs();
+  // Only load essentials on page load — tab data loads lazily via onTabActivated
   fetchQdrantHealth();
   fetchRagCollections();
-  fetchRagSources();
-  fetchRagJobs();
-  checkAgentStatus();
-  fetchAgentTasks();
-  fetchProductStats();
-  fetchCompetitorSources();
-  fetchDevopsSources();
-  setInterval(fetchAgentTasks, 10000);
+  // Active tab's data is loaded by initTabs → switchTab → onTabActivated
 });

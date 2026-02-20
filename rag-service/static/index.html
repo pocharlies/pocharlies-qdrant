@@ -27,7 +27,7 @@
       </div>
     </header>
 
-    <!-- Qdrant Health -->
+    <!-- Qdrant Health (always visible) -->
     <section class="section glass">
       <div class="qdrant-health-header">
         <h2>Qdrant</h2>
@@ -39,288 +39,498 @@
       </div>
     </section>
 
-    <!-- AI Agent -->
-    <section id="agent-section" class="section glass">
-      <h2>AI Agent</h2>
-      <p class="section-desc">Autonomous agent that can search the web, crawl websites, and manage your RAG database.</p>
-      <div id="agent-status-bar" class="agent-status-bar">
-        <span class="muted">Checking LLM availability...</span>
-      </div>
-      <div id="agent-form" class="rag-form" style="display:none">
-        <div class="rag-form-row">
-          <textarea id="agent-prompt" class="rag-input agent-textarea" rows="2"
-                    placeholder="Describe a task... e.g. 'Find and index the top 5 airsoft stores in Spain'"></textarea>
-          <button id="agent-run-btn" class="btn btn-accent" onclick="startAgentTask()">Run Agent</button>
-        </div>
-      </div>
-      <div id="agent-tasks-list"></div>
-    </section>
+    <!-- Tab Bar -->
+    <nav class="tab-bar glass" role="tablist">
+      <button class="tab-btn active" role="tab" data-tab="sources" aria-selected="true">Data Sources</button>
+      <button class="tab-btn" role="tab" data-tab="search" aria-selected="false">Search &amp; Chat</button>
+      <button class="tab-btn" role="tab" data-tab="ai" aria-selected="false">AI Tools</button>
+    </nav>
 
-    <!-- Web Scraper -->
-    <section class="section glass">
-      <h2>Web Scraper</h2>
-      <p class="section-desc">Crawl websites and index content for RAG retrieval.</p>
-      <div class="rag-form">
-        <div class="rag-form-row">
-          <input id="rag-url" type="url" class="rag-input" placeholder="https://example.com" />
-          <select id="rag-depth" class="rag-select">
-            <option value="0">Depth 0 (single page)</option>
-            <option value="1" selected>Depth 1</option>
-            <option value="2">Depth 2</option>
-            <option value="3">Depth 3</option>
-            <option value="4">Depth 4</option>
-            <option value="5">Depth 5 (max)</option>
-          </select>
-          <input id="rag-max-pages" type="number" class="rag-input rag-input-sm" value="50" min="1" max="25000" placeholder="Max pages" />
-          <label class="rag-smart-toggle" title="Use AI to analyze site structure before crawling for better content extraction">
-            <input id="rag-smart-mode" type="checkbox" checked /> Smart
-          </label>
-          <button id="rag-crawl-btn" class="btn btn-accent" onclick="startRagCrawl()">Start Crawling</button>
-        </div>
-      </div>
-      <div id="rag-crawl-progress" class="rag-crawl-status" style="display:none">
-        <div class="rag-progress-bar-wrap">
-          <div id="rag-progress-bar" class="rag-progress-bar"></div>
-        </div>
-        <p id="rag-crawl-info" class="muted"></p>
-      </div>
-    </section>
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB: Data Sources                                      -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="tab-pane active" data-tab="sources">
 
-    <!-- Crawl Jobs -->
-    <section class="section glass">
-      <h2>Crawl Jobs</h2>
-      <p class="section-desc">Active and recently completed crawl jobs.</p>
-      <div id="rag-jobs">
-        <p class="muted">No jobs yet.</p>
-      </div>
-    </section>
-
-    <!-- Indexed Sources -->
-    <section class="section glass">
-      <h2>Indexed Sources</h2>
-      <p class="section-desc">Web domains indexed in the vector database.</p>
-      <div id="rag-sources">
-        <p class="muted">No sources indexed.</p>
-      </div>
-    </section>
-
-    <!-- Product Catalog -->
-    <section class="section glass">
-      <h2>Product Catalog</h2>
-      <p class="section-desc">Shopify product catalog sync and semantic search.</p>
-      <div id="product-stats" class="product-stats-bar">
-        <span class="muted">Loading stats...</span>
-      </div>
-      <div class="rag-form">
-        <div class="rag-form-row">
-          <button class="btn btn-accent" onclick="syncProducts('full')">Full Sync</button>
-          <button class="btn-ghost btn" onclick="syncProducts('incremental')">Incremental Sync</button>
-        </div>
-      </div>
-      <div id="product-sync-status" style="display:none" class="rag-crawl-status">
-        <div class="rag-progress-bar-wrap">
-          <div id="product-sync-bar" class="rag-progress-bar"></div>
-        </div>
-        <p id="product-sync-info" class="muted"></p>
-      </div>
-      <div class="rag-form" style="margin-top:12px">
-        <div class="rag-form-row">
-          <input id="product-search-query" type="text" class="rag-input" placeholder="Search products..." onkeydown="if(event.key==='Enter')searchProducts()" />
-          <input id="product-search-brand" type="text" class="rag-input rag-input-sm" style="flex:0 0 120px" placeholder="Brand" />
-          <input id="product-search-category" type="text" class="rag-input rag-input-sm" style="flex:0 0 120px" placeholder="Category" />
-          <button class="btn btn-accent" onclick="searchProducts()">Search</button>
-        </div>
-      </div>
-      <div id="product-results">
-        <p class="muted">Sync your Shopify catalog, then search products.</p>
-      </div>
-    </section>
-
-    <!-- Competitor Intelligence -->
-    <section class="section glass">
-      <h2>Competitor Intelligence</h2>
-      <p class="section-desc">Index competitor websites, extract products, and compare prices.</p>
-      <div class="rag-form">
-        <div class="rag-form-row">
-          <input id="competitor-url" type="url" class="rag-input" placeholder="https://competitor-store.com" />
-          <select id="competitor-depth" class="rag-select">
-            <option value="1">Depth 1</option>
-            <option value="2" selected>Depth 2</option>
-            <option value="3">Depth 3</option>
-          </select>
-          <input id="competitor-max-pages" type="number" class="rag-input rag-input-sm" value="100" min="1" max="5000" placeholder="Max pages" />
-          <label class="rag-smart-toggle" title="Use AI to detect product pages">
-            <input id="competitor-smart" type="checkbox" checked /> Smart
-          </label>
-          <button class="btn btn-accent" onclick="indexCompetitor()">Index Competitor</button>
-        </div>
-      </div>
-      <div id="competitor-progress" class="rag-crawl-status" style="display:none">
-        <div class="rag-progress-bar-wrap">
-          <div id="competitor-progress-bar" class="rag-progress-bar"></div>
-        </div>
-        <p id="competitor-progress-info" class="muted"></p>
-      </div>
-      <div id="competitor-sources">
-        <p class="muted">No competitor sources indexed.</p>
-      </div>
-      <div id="competitor-actions" style="display:none;margin-top:12px">
-        <div class="rag-form-row">
-          <select id="competitor-domain-select" class="rag-select">
-            <option value="">Select domain...</option>
-          </select>
-          <button class="btn btn-accent" onclick="extractCompetitorProducts()">Extract Products</button>
-          <button class="btn-ghost btn" onclick="resolveCompetitorProducts()">Price Match</button>
-        </div>
-      </div>
-      <div id="competitor-results"></div>
-    </section>
-
-    <!-- Translation -->
-    <section class="section glass">
-      <h2>Translation</h2>
-      <p class="section-desc">Translate text and normalize product specifications (EN &rarr; ES).</p>
-      <div class="rag-form">
-        <div class="rag-form-row">
-          <textarea id="translate-input" class="rag-input agent-textarea" rows="3"
-                    placeholder="Enter text to translate (one per line for batch)..."></textarea>
-          <div class="translate-controls">
-            <select id="translate-source" class="rag-select">
-              <option value="en">English</option>
-              <option value="es">Spanish</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
+      <!-- Web Scraper -->
+      <section class="section glass">
+        <h2>Web Scraper</h2>
+        <p class="section-desc">Crawl websites and index content for RAG retrieval.</p>
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <input id="rag-url" type="url" class="rag-input" placeholder="https://example.com" />
+            <select id="rag-depth" class="rag-select">
+              <option value="0">Depth 0 (single page)</option>
+              <option value="1" selected>Depth 1</option>
+              <option value="2">Depth 2</option>
+              <option value="3">Depth 3</option>
+              <option value="4">Depth 4</option>
+              <option value="5">Depth 5 (max)</option>
             </select>
+            <input id="rag-max-pages" type="number" class="rag-input rag-input-sm" value="50" min="1" max="25000" placeholder="Max pages" />
+            <label class="rag-smart-toggle" title="Use AI to analyze site structure before crawling for better content extraction">
+              <input id="rag-smart-mode" type="checkbox" checked /> Smart
+            </label>
+            <button id="rag-crawl-btn" class="btn btn-accent" onclick="startRagCrawl()">Start Crawling</button>
+          </div>
+        </div>
+        <div id="rag-crawl-progress" class="rag-crawl-status" style="display:none">
+          <div class="rag-progress-bar-wrap">
+            <div id="rag-progress-bar" class="rag-progress-bar"></div>
+          </div>
+          <p id="rag-crawl-info" class="muted"></p>
+        </div>
+      </section>
+
+      <!-- Crawl Jobs & Indexed Sources (lazy-load dropdowns) -->
+      <section class="section glass">
+        <details class="lazy-dropdown" data-lazy="rag-jobs" ontoggle="lazyLoad(this, fetchRagJobs)">
+          <summary class="lazy-summary">Crawl Jobs <span class="lazy-hint muted">click to load</span></summary>
+          <div id="rag-jobs" class="lazy-content">
+            <p class="muted">Loading...</p>
+          </div>
+        </details>
+        <details class="lazy-dropdown" data-lazy="rag-sources" ontoggle="lazyLoad(this, fetchRagSources)" style="margin-top:10px">
+          <summary class="lazy-summary">Indexed Sources <span class="lazy-hint muted">click to load</span></summary>
+          <div id="rag-sources" class="lazy-content">
+            <p class="muted">Loading...</p>
+          </div>
+        </details>
+      </section>
+
+      <!-- Product Catalog -->
+      <section class="section glass">
+        <h2>Product Catalog</h2>
+        <p class="section-desc">Shopify product catalog sync and semantic search.</p>
+        <div id="product-stats" class="product-stats-bar">
+          <span class="muted">Loading stats...</span>
+        </div>
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <button class="btn btn-accent" onclick="syncProducts('full')">Full Sync</button>
+            <button class="btn-ghost btn" onclick="syncProducts('incremental')">Incremental Sync</button>
+          </div>
+        </div>
+        <div id="product-sync-status" style="display:none" class="rag-crawl-status">
+          <div class="rag-progress-bar-wrap">
+            <div id="product-sync-bar" class="rag-progress-bar"></div>
+          </div>
+          <p id="product-sync-info" class="muted"></p>
+        </div>
+        <div id="product-results"></div>
+      </section>
+
+      <!-- Competitor Intelligence -->
+      <section class="section glass">
+        <h2>Competitor Intelligence</h2>
+        <p class="section-desc">Index competitor websites, extract products, and compare prices.</p>
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <input id="competitor-url" type="url" class="rag-input" placeholder="https://competitor-store.com" />
+            <select id="competitor-depth" class="rag-select">
+              <option value="1">Depth 1</option>
+              <option value="2" selected>Depth 2</option>
+              <option value="3">Depth 3</option>
+            </select>
+            <input id="competitor-max-pages" type="number" class="rag-input rag-input-sm" value="100" min="1" max="5000" placeholder="Max pages" />
+            <label class="rag-smart-toggle" title="Use AI to detect product pages">
+              <input id="competitor-smart" type="checkbox" checked /> Smart
+            </label>
+            <button class="btn btn-accent" onclick="indexCompetitor()">Index Competitor</button>
+          </div>
+        </div>
+        <div id="competitor-progress" class="rag-crawl-status" style="display:none">
+          <div class="rag-progress-bar-wrap">
+            <div id="competitor-progress-bar" class="rag-progress-bar"></div>
+          </div>
+          <p id="competitor-progress-info" class="muted"></p>
+        </div>
+        <details class="lazy-dropdown" data-lazy="competitor-sources" ontoggle="lazyLoad(this, fetchCompetitorSources)">
+          <summary class="lazy-summary">Indexed Competitors <span class="lazy-hint muted">click to load</span></summary>
+          <div class="lazy-content">
+            <div id="competitor-sources">
+              <p class="muted">Loading...</p>
+            </div>
+            <div id="competitor-actions" style="display:none;margin-top:12px">
+              <div class="rag-form-row">
+                <select id="competitor-domain-select" class="rag-select">
+                  <option value="">Select domain...</option>
+                </select>
+                <button class="btn btn-accent" onclick="extractCompetitorProducts()">Extract Products</button>
+                <button class="btn-ghost btn" onclick="resolveCompetitorProducts()">Price Match</button>
+              </div>
+            </div>
+          </div>
+        </details>
+        <div id="competitor-results"></div>
+      </section>
+
+      <!-- DevOps Docs -->
+      <section class="section glass">
+        <h2>DevOps Docs</h2>
+        <p class="section-desc">Index documentation, search infrastructure knowledge, and analyze logs.</p>
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <input id="devops-path" type="text" class="rag-input" placeholder="/path/to/docs or /path/to/file.md" />
+            <label class="rag-smart-toggle">
+              <input id="devops-recursive" type="checkbox" checked /> Recursive
+            </label>
+            <button class="btn btn-accent" onclick="indexDevopsDocs()">Index Docs</button>
+          </div>
+        </div>
+        <details class="lazy-dropdown" data-lazy="devops-sources" ontoggle="lazyLoad(this, fetchDevopsSources)">
+          <summary class="lazy-summary">Indexed Docs <span class="lazy-hint muted">click to load</span></summary>
+          <div id="devops-sources" class="lazy-content">
+            <p class="muted">Loading...</p>
+          </div>
+        </details>
+        <div id="devops-results"></div>
+        <details class="devops-log-analyzer" style="margin-top:12px">
+          <summary class="section-desc" style="cursor:pointer;font-weight:600;color:var(--text)">Log Analyzer</summary>
+          <div class="rag-form" style="margin-top:8px">
+            <textarea id="devops-log-input" class="rag-input agent-textarea" rows="4" placeholder="Paste log output here..."></textarea>
+            <div class="rag-form-row" style="margin-top:8px">
+              <input id="devops-log-service" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Service name" />
+              <button class="btn btn-accent" onclick="analyzeLogs()">Analyze Logs</button>
+            </div>
+          </div>
+          <div id="devops-log-results"></div>
+        </details>
+      </section>
+
+      <!-- Code Indexing -->
+      <section class="section glass">
+        <h2>Code Indexing</h2>
+        <p class="section-desc">Index code repositories for semantic code search.</p>
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <input id="code-repo-path" type="text" class="rag-input" placeholder="/path/to/repository" />
+            <input id="code-repo-name" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Repo name (optional)" />
+            <button class="btn btn-accent" onclick="indexCodeRepo()">Index Repo</button>
+          </div>
+        </div>
+        <div id="code-index-status" style="display:none" class="rag-crawl-status">
+          <p id="code-index-info" class="muted"></p>
+        </div>
+        <div id="code-results"></div>
+      </section>
+
+      <!-- Jira Tickets -->
+      <section class="section glass">
+        <div class="section-header-row">
+          <div>
+            <h2>Jira Tickets</h2>
+            <p class="section-desc">Index Jira Cloud tickets for RAG retrieval and search.</p>
+          </div>
+          <div id="jira-connection-badge" class="jira-connection-badge">
+            <span class="agent-status-dot offline"></span>
+            <span class="muted">Checking...</span>
+          </div>
+        </div>
+
+        <!-- Status overview -->
+        <div id="jira-stats-row" class="jira-stats-row" style="display:none">
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="jira-stat-tickets">0</div>
+            <div class="jira-stat-label">Tickets</div>
+          </div>
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="jira-stat-chunks">0</div>
+            <div class="jira-stat-label">Chunks</div>
+          </div>
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="jira-stat-projects">0</div>
+            <div class="jira-stat-label">Projects</div>
+          </div>
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="jira-stat-last-indexed">Never</div>
+            <div class="jira-stat-label">Last Indexed</div>
+          </div>
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="jira-stat-nightly">--</div>
+            <div class="jira-stat-label">Nightly Sync</div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <input id="jira-import-project" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Project key (all)" />
+            <button id="jira-import-btn" class="btn btn-accent" onclick="startJiraImport()">Full Import</button>
+            <button id="jira-sync-btn" class="btn-ghost btn" onclick="startJiraSync()">Sync Recent (24h)</button>
+          </div>
+        </div>
+
+        <!-- Import progress -->
+        <div id="jira-import-progress" class="rag-crawl-status" style="display:none">
+          <div class="rag-progress-bar-wrap">
+            <div id="jira-progress-bar" class="rag-progress-bar"></div>
+          </div>
+          <p id="jira-import-info" class="muted"></p>
+        </div>
+
+        <!-- Active jobs -->
+        <div id="jira-active-jobs" style="display:none"></div>
+
+        <!-- Indexed projects (lazy-load) -->
+        <details class="lazy-dropdown" data-lazy="jira-sources" ontoggle="lazyLoad(this, fetchJiraSources)">
+          <summary class="lazy-summary">Indexed Projects <span id="jira-sources-count" class="lazy-count"></span> <span class="lazy-hint muted">click to load</span></summary>
+          <div id="jira-sources" class="lazy-content">
+            <p class="muted">Loading...</p>
+          </div>
+        </details>
+
+        <div id="jira-results"></div>
+      </section>
+
+      <!-- Confluence Pages -->
+      <section class="section glass">
+        <div class="section-header-row">
+          <div>
+            <h2>Confluence Pages</h2>
+            <p class="section-desc">Index Confluence Cloud wiki pages for RAG retrieval and search.</p>
+          </div>
+          <div id="confluence-connection-badge" class="jira-connection-badge">
+            <span class="agent-status-dot offline"></span>
+            <span class="muted">Checking...</span>
+          </div>
+        </div>
+
+        <!-- Status overview -->
+        <div id="confluence-stats-row" class="jira-stats-row" style="display:none">
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="confluence-stat-pages">0</div>
+            <div class="jira-stat-label">Pages</div>
+          </div>
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="confluence-stat-chunks">0</div>
+            <div class="jira-stat-label">Chunks</div>
+          </div>
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="confluence-stat-spaces">0</div>
+            <div class="jira-stat-label">Spaces</div>
+          </div>
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="confluence-stat-last-indexed">Never</div>
+            <div class="jira-stat-label">Last Indexed</div>
+          </div>
+          <div class="jira-stat-card glass">
+            <div class="jira-stat-value" id="confluence-stat-nightly">--</div>
+            <div class="jira-stat-label">Nightly Sync</div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <input id="confluence-import-space" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Space key (all)" />
+            <button id="confluence-import-btn" class="btn btn-accent" onclick="startConfluenceImport()">Full Import</button>
+            <button id="confluence-sync-btn" class="btn-ghost btn" onclick="startConfluenceSync()">Sync Recent (24h)</button>
+          </div>
+        </div>
+
+        <!-- Import progress -->
+        <div id="confluence-import-progress" class="rag-crawl-status" style="display:none">
+          <div class="rag-progress-bar-wrap">
+            <div id="confluence-progress-bar" class="rag-progress-bar"></div>
+          </div>
+          <p id="confluence-import-info" class="muted"></p>
+        </div>
+
+        <!-- Active jobs -->
+        <div id="confluence-active-jobs" style="display:none"></div>
+
+        <!-- Indexed spaces (lazy-load) -->
+        <details class="lazy-dropdown" data-lazy="confluence-sources" ontoggle="lazyLoad(this, fetchConfluenceSources)">
+          <summary class="lazy-summary">Indexed Spaces <span id="confluence-sources-count" class="lazy-count"></span> <span class="lazy-hint muted">click to load</span></summary>
+          <div id="confluence-sources" class="lazy-content">
+            <p class="muted">Loading...</p>
+          </div>
+        </details>
+
+        <div id="confluence-results"></div>
+      </section>
+
+    </div><!-- /tab:sources -->
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB: Search & Chat                                     -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="tab-pane" data-tab="search">
+
+      <!-- Unified Search -->
+      <section class="section glass">
+        <h2>Search</h2>
+        <p class="section-desc">Hybrid search across all indexed collections.</p>
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <input id="rag-search-query" type="text" class="rag-input" placeholder="Search query..." onkeydown="if(event.key==='Enter')searchRag()" />
+            <select id="rag-search-collection" class="rag-select" onchange="onSearchCollectionChange(this.value)">
+              <option value="all">All collections</option>
+              <option value="web">Web pages</option>
+              <option value="code">Code index</option>
+              <option value="products">Products</option>
+              <option value="competitors">Competitors</option>
+              <option value="devops">DevOps</option>
+              <option value="jira">Jira</option>
+              <option value="confluence">Confluence</option>
+            </select>
+            <input id="rag-search-topk" type="number" class="rag-input rag-input-sm" value="10" min="1" max="50" placeholder="Top K" />
+            <button class="btn btn-accent" onclick="searchRag()">Search</button>
+          </div>
+          <!-- Adaptive filters row (shown/hidden based on collection) -->
+          <div id="search-filters" class="rag-form-row search-filters" style="display:none">
+            <!-- Web / Competitors filters -->
+            <select id="rag-search-domain" class="rag-select search-filter" data-collections="web,competitors" style="display:none">
+              <option value="">All domains</option>
+            </select>
+            <!-- Code filters -->
+            <input id="rag-search-repo" type="text" class="rag-input rag-input-sm search-filter" data-collections="code" placeholder="Repo filter" style="display:none" />
+            <!-- Product filters -->
+            <input id="rag-search-brand" type="text" class="rag-input rag-input-sm search-filter" data-collections="products" placeholder="Brand" style="display:none" />
+            <input id="rag-search-category" type="text" class="rag-input rag-input-sm search-filter" data-collections="products" placeholder="Category" style="display:none" />
+            <!-- Jira filters -->
+            <select id="rag-search-jira-project" class="rag-select search-filter" data-collections="jira" style="display:none">
+              <option value="">All projects</option>
+            </select>
+            <select id="rag-search-jira-assignee" class="rag-select search-filter" data-collections="jira" style="display:none">
+              <option value="">All assignees</option>
+            </select>
+            <select id="rag-search-jira-type" class="rag-select search-filter" data-collections="jira" style="display:none">
+              <option value="">All types</option>
+              <option value="Bug">Bug</option>
+              <option value="Story">Story</option>
+              <option value="Task">Task</option>
+              <option value="Epic">Epic</option>
+              <option value="Sub-task">Sub-task</option>
+            </select>
+            <!-- Confluence filters -->
+            <select id="rag-search-confluence-space" class="rag-select search-filter" data-collections="confluence" style="display:none">
+              <option value="">All spaces</option>
+            </select>
+            <select id="rag-search-confluence-author" class="rag-select search-filter" data-collections="confluence" style="display:none">
+              <option value="">All authors</option>
+            </select>
+            <select id="rag-search-confluence-department" class="rag-select search-filter" data-collections="confluence" style="display:none">
+              <option value="">All departments</option>
+            </select>
+            <select id="rag-search-confluence-topic" class="rag-select search-filter" data-collections="confluence" style="display:none">
+              <option value="">All topics</option>
+            </select>
+          </div>
+        </div>
+        <div id="rag-results">
+          <p class="muted">Enter a query to search indexed content.</p>
+        </div>
+      </section>
+
+      <!-- Chat with RAG -->
+      <section class="section glass">
+        <h2>Chat</h2>
+        <p class="section-desc">Chat with AI using RAG context from all indexed collections.</p>
+        <div id="chat-messages" class="chat-messages">
+          <div class="chat-message assistant">
+            <span class="chat-role">AI</span>
+            <div class="chat-text">Ask me anything. I can use RAG to search indexed content and tools to explore code.</div>
+          </div>
+        </div>
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <input id="chat-input" type="text" class="rag-input" placeholder="Ask a question..."
+                   onkeydown="if(event.key==='Enter')sendChat()" />
+            <label class="rag-smart-toggle" title="Use RAG context">
+              <input id="chat-use-rag" type="checkbox" checked /> RAG
+            </label>
+            <label class="rag-smart-toggle" title="Allow tool use">
+              <input id="chat-use-tools" type="checkbox" /> Tools
+            </label>
+            <button class="btn btn-accent" onclick="sendChat()">Send</button>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /tab:search -->
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB: AI Tools                                          -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="tab-pane" data-tab="ai">
+
+      <!-- AI Agent -->
+      <section id="agent-section" class="section glass">
+        <h2>AI Agent</h2>
+        <p class="section-desc">Autonomous agent that can search the web, crawl websites, and manage your RAG database.</p>
+        <div id="agent-status-bar" class="agent-status-bar">
+          <span class="muted">Checking LLM availability...</span>
+        </div>
+        <div id="agent-form" class="rag-form" style="display:none">
+          <div class="rag-form-row">
+            <textarea id="agent-prompt" class="rag-input agent-textarea" rows="2"
+                      placeholder="Describe a task... e.g. 'Find and index the top 5 airsoft stores in Spain'"></textarea>
+            <button id="agent-run-btn" class="btn btn-accent" onclick="startAgentTask()">Run Agent</button>
+          </div>
+        </div>
+        <div id="agent-tasks-list"></div>
+      </section>
+
+      <!-- Translation -->
+      <section class="section glass">
+        <h2>Translation</h2>
+        <p class="section-desc">Translate text and normalize product specifications. Uses airsoft terminology glossary for accurate domain translations.</p>
+        <div class="rag-form">
+          <div class="rag-form-row">
+            <textarea id="translate-input" class="rag-input agent-textarea" rows="3"
+                      placeholder="Enter text to translate (one per line for batch)..."></textarea>
+            <div class="translate-controls">
+              <select id="translate-source" class="rag-select">
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+              </select>
+              <span class="translate-arrow">&rarr;</span>
+              <select id="translate-target" class="rag-select">
+                <option value="es" selected>Spanish</option>
+                <option value="en">English</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+              </select>
+              <button class="btn btn-accent" onclick="translateBatch()">Translate</button>
+            </div>
+          </div>
+        </div>
+        <div id="translate-results">
+          <p class="muted">Enter text above and click Translate.</p>
+        </div>
+      </section>
+
+      <!-- Glossary -->
+      <section class="section glass">
+        <h2>Terminology Glossary</h2>
+        <p class="section-desc">
+          <span id="glossary-stats" class="muted">Loading...</span>
+          &mdash; Custom terms override built-in ones. All matching terms are injected into translation prompts.
+        </p>
+        <div class="rag-form">
+          <div class="rag-form-row" style="gap:.5rem;align-items:center">
+            <input id="glossary-source" class="rag-input" style="flex:1" placeholder="Source term (e.g. inner barrel)">
             <span class="translate-arrow">&rarr;</span>
-            <select id="translate-target" class="rag-select">
-              <option value="es" selected>Spanish</option>
-              <option value="en">English</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-            </select>
-            <button class="btn btn-accent" onclick="translateBatch()">Translate</button>
+            <input id="glossary-target" class="rag-input" style="flex:1" placeholder="Translation (e.g. ca&ntilde;&oacute;n interior)">
+            <button class="btn btn-accent" onclick="addGlossaryEntry()">Add</button>
+          </div>
+          <div style="display:flex;gap:.5rem;margin-top:.5rem;align-items:center">
+            <input id="glossary-search" class="rag-input" style="flex:1" placeholder="Search glossary..." oninput="filterGlossary()">
+            <label style="white-space:nowrap;font-size:.85rem;color:var(--text-muted)">
+              <input type="checkbox" id="glossary-show-builtin" checked onchange="filterGlossary()"> Built-in
+            </label>
+            <label style="white-space:nowrap;font-size:.85rem;color:var(--text-muted)">
+              <input type="checkbox" id="glossary-show-custom" checked onchange="filterGlossary()"> Custom
+            </label>
           </div>
         </div>
-      </div>
-      <div id="translate-results">
-        <p class="muted">Enter text above and click Translate.</p>
-      </div>
-    </section>
+        <div id="glossary-list" style="max-height:400px;overflow-y:auto;margin-top:.5rem"></div>
+      </section>
 
-    <!-- DevOps Docs -->
-    <section class="section glass">
-      <h2>DevOps Docs</h2>
-      <p class="section-desc">Index documentation, search infrastructure knowledge, and analyze logs.</p>
-      <div class="rag-form">
-        <div class="rag-form-row">
-          <input id="devops-path" type="text" class="rag-input" placeholder="/path/to/docs or /path/to/file.md" />
-          <label class="rag-smart-toggle">
-            <input id="devops-recursive" type="checkbox" checked /> Recursive
-          </label>
-          <button class="btn btn-accent" onclick="indexDevopsDocs()">Index Docs</button>
-        </div>
-      </div>
-      <div id="devops-sources">
-        <p class="muted">No DevOps docs indexed.</p>
-      </div>
-      <div class="rag-form" style="margin-top:12px">
-        <div class="rag-form-row">
-          <input id="devops-search-query" type="text" class="rag-input" placeholder="Search DevOps docs..." onkeydown="if(event.key==='Enter')searchDevops()" />
-          <button class="btn btn-accent" onclick="searchDevops()">Search</button>
-        </div>
-      </div>
-      <div id="devops-results"></div>
-      <details class="devops-log-analyzer" style="margin-top:12px">
-        <summary class="section-desc" style="cursor:pointer;font-weight:600;color:var(--text)">Log Analyzer</summary>
-        <div class="rag-form" style="margin-top:8px">
-          <textarea id="devops-log-input" class="rag-input agent-textarea" rows="4" placeholder="Paste log output here..."></textarea>
-          <div class="rag-form-row" style="margin-top:8px">
-            <input id="devops-log-service" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Service name" />
-            <button class="btn btn-accent" onclick="analyzeLogs()">Analyze Logs</button>
-          </div>
-        </div>
-        <div id="devops-log-results"></div>
-      </details>
-    </section>
-
-    <!-- Code Indexing -->
-    <section class="section glass">
-      <h2>Code Indexing</h2>
-      <p class="section-desc">Index code repositories for semantic code search.</p>
-      <div class="rag-form">
-        <div class="rag-form-row">
-          <input id="code-repo-path" type="text" class="rag-input" placeholder="/path/to/repository" />
-          <input id="code-repo-name" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Repo name (optional)" />
-          <button class="btn btn-accent" onclick="indexCodeRepo()">Index Repo</button>
-        </div>
-      </div>
-      <div id="code-index-status" style="display:none" class="rag-crawl-status">
-        <p id="code-index-info" class="muted"></p>
-      </div>
-      <div class="rag-form" style="margin-top:12px">
-        <div class="rag-form-row">
-          <input id="code-search-query" type="text" class="rag-input" placeholder="Search code..." onkeydown="if(event.key==='Enter')searchCode()" />
-          <input id="code-search-repo" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Repo filter" />
-          <input id="code-search-topk" type="number" class="rag-input rag-input-sm" value="10" min="1" max="50" placeholder="Top K" />
-          <button class="btn btn-accent" onclick="searchCode()">Search</button>
-        </div>
-      </div>
-      <div id="code-results">
-        <p class="muted">Index a repository, then search code semantically.</p>
-      </div>
-    </section>
-
-    <!-- Search & Test -->
-    <section class="section glass">
-      <h2>Search &amp; Test</h2>
-      <p class="section-desc">Hybrid search across all collections.</p>
-      <div class="rag-form">
-        <div class="rag-form-row">
-          <input id="rag-search-query" type="text" class="rag-input" placeholder="Search query..." onkeydown="if(event.key==='Enter')searchRag()" />
-          <select id="rag-search-collection" class="rag-select">
-            <option value="all">All collections</option>
-            <option value="web">Web pages</option>
-            <option value="code">Code index</option>
-            <option value="products">Products</option>
-            <option value="competitors">Competitors</option>
-            <option value="devops">DevOps</option>
-          </select>
-          <select id="rag-search-domain" class="rag-select">
-            <option value="">All domains</option>
-          </select>
-          <input id="rag-search-topk" type="number" class="rag-input rag-input-sm" value="10" min="1" max="50" placeholder="Top K" />
-          <button class="btn btn-accent" onclick="searchRag()">Search</button>
-        </div>
-      </div>
-      <div id="rag-results">
-        <p class="muted">Enter a query to search indexed content.</p>
-      </div>
-    </section>
-
-    <!-- Chat with RAG -->
-    <section class="section glass">
-      <h2>Chat</h2>
-      <p class="section-desc">Chat with AI using RAG context from all indexed collections.</p>
-      <div id="chat-messages" class="chat-messages">
-        <div class="chat-message assistant">
-          <span class="chat-role">AI</span>
-          <div class="chat-text">Ask me anything. I can use RAG to search indexed content and tools to explore code.</div>
-        </div>
-      </div>
-      <div class="rag-form">
-        <div class="rag-form-row">
-          <input id="chat-input" type="text" class="rag-input" placeholder="Ask a question..."
-                 onkeydown="if(event.key==='Enter')sendChat()" />
-          <label class="rag-smart-toggle" title="Use RAG context">
-            <input id="chat-use-rag" type="checkbox" checked /> RAG
-          </label>
-          <label class="rag-smart-toggle" title="Allow tool use">
-            <input id="chat-use-tools" type="checkbox" /> Tools
-          </label>
-          <button class="btn btn-accent" onclick="sendChat()">Send</button>
-        </div>
-      </div>
-    </section>
+    </div><!-- /tab:ai -->
 
     <footer class="footer">
       <span>Pocharlies Qdrant &bull; RAG Service</span>
