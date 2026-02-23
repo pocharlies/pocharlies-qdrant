@@ -21,8 +21,6 @@ from openai import OpenAI
 import validators
 import httpx
 
-from indexer import CodeIndexer
-from retriever import CodeRetriever, CodeTools, TOOL_DEFINITIONS
 from web_indexer import WebIndexer, CrawlJob
 from agent import AgentTask, AgentServices, create_agent
 from agent.runner import run_task
@@ -30,10 +28,8 @@ from agent.redis_session import RedisSession
 from agent.session_store import SessionStore
 from product_indexer import ProductIndexer, ProductSyncJob
 from product_classifier import ProductClassifier, ClassificationJob
-from translator import TranslationPipeline, TranslationJob, GlossaryStore, AIRSOFT_GLOSSARY_EN_ES
-from devops_indexer import DevOpsIndexer, LogAnalyzer, DevOpsIndexJob, LogAnalysisJob
-from jira_indexer import JiraIndexer, JiraImportJob
-from confluence_indexer import ConfluenceIndexer, ConfluenceImportJob
+from translator import TranslationPipeline, TranslationJob, GlossaryStore
+from glossary_data import GLOSSARY, SUPPORTED_LANGUAGES, get_glossary_for_pair
 from shopify_client import ShopifyClient
 from reranker import get_reranker, init_reranker
 
@@ -46,36 +42,20 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://litellm:4000/v1")
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", "none")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
-REPOS_PATH = os.getenv("REPOS_PATH", "/repos")
-DEVOPS_DOCS_PATH = os.getenv("DEVOPS_DOCS_PATH", "/devops-docs")
 SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", "")
 SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
-JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "")
-JIRA_EMAIL = os.getenv("JIRA_EMAIL", "")
-JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN", "")
-JIRA_SYNC_ENABLED = os.getenv("JIRA_SYNC_ENABLED", "false").lower() == "true"
-JIRA_SYNC_HOUR = int(os.getenv("JIRA_SYNC_HOUR", "2"))
-CONFLUENCE_SYNC_ENABLED = os.getenv("CONFLUENCE_SYNC_ENABLED", "false").lower() == "true"
-CONFLUENCE_SYNC_HOUR = int(os.getenv("CONFLUENCE_SYNC_HOUR", "3"))
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # Global instances
-retriever: CodeRetriever = None
-indexer: CodeIndexer = None
 web_indexer: WebIndexer = None
 competitor_indexer: WebIndexer = None
 product_indexer: ProductIndexer = None
 product_classifier: ProductClassifier = None
 translator: TranslationPipeline = None
 glossary_store: GlossaryStore = None
-devops_indexer: DevOpsIndexer = None
-log_analyzer: LogAnalyzer = None
-jira_indexer: JiraIndexer = None
-confluence_indexer: ConfluenceIndexer = None
 shopify_client: ShopifyClient = None
-tools: CodeTools = None
 llm_client: OpenAI = None
 llm_model_id: str = None  # auto-discovered at startup
 rag_agent = None  # Agent SDK instance, created at startup
@@ -96,60 +76,43 @@ classification_jobs: Dict[str, ClassificationJob] = {}
 # Translation jobs
 translation_jobs: Dict[str, TranslationJob] = {}
 
-# DevOps jobs
-devops_index_jobs: Dict[str, DevOpsIndexJob] = {}
-log_analysis_jobs: Dict[str, LogAnalysisJob] = {}
-
-# Jira import jobs
-jira_import_jobs: Dict[str, JiraImportJob] = {}
-
-# Confluence import jobs
-confluence_import_jobs: Dict[str, ConfluenceImportJob] = {}
-
 # Agent tasks
 agent_tasks: Dict[str, AgentTask] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global retriever, indexer, web_indexer, competitor_indexer, tools, llm_client, llm_model_id
+    global web_indexer, competitor_indexer, llm_client, llm_model_id
     global product_indexer, product_classifier, translator
-    global devops_indexer, log_analyzer, jira_indexer, confluence_indexer, shopify_client, rag_agent
+    global shopify_client, rag_agent
     global redis_client, session_store, glossary_store
 
     logger.info("Initializing RAG service components...")
 
-    retriever = CodeRetriever(
-        qdrant_url=QDRANT_URL,
-        qdrant_api_key=QDRANT_API_KEY,
-        embedding_model=EMBEDDING_MODEL
-    )
-    indexer = CodeIndexer(
-        qdrant_url=QDRANT_URL,
-        qdrant_api_key=QDRANT_API_KEY,
-        embedding_model=EMBEDDING_MODEL
-    )
-    # Share the embedding model from CodeIndexer to avoid loading it twice (~440MB)
+    # Load shared embedding model once (~440MB)
+    from sentence_transformers import SentenceTransformer
+    embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+
     web_indexer = WebIndexer(
         qdrant_url=QDRANT_URL,
         qdrant_api_key=QDRANT_API_KEY,
-        model=indexer.model,
+        model=embedding_model,
     )
     competitor_indexer = WebIndexer(
         qdrant_url=QDRANT_URL,
         qdrant_api_key=QDRANT_API_KEY,
-        model=indexer.model,
+        model=embedding_model,
         collection_name="competitor_products",
     )
     product_indexer = ProductIndexer(
         qdrant_url=QDRANT_URL,
         qdrant_api_key=QDRANT_API_KEY,
-        model=indexer.model,
+        model=embedding_model,
     )
-    tools = CodeTools(repos_base_path=REPOS_PATH)
     llm_client = OpenAI(
         base_url=VLLM_BASE_URL,
         api_key=LITELLM_API_KEY,
+        default_headers={"X-Source-Service": "pocharlies-rag"},
     )
 
     # Auto-discover LLM model ID
@@ -175,45 +138,10 @@ async def lifespan(app: FastAPI):
     # Product classifier + translator (use LLM)
     product_classifier = ProductClassifier(
         qdrant_client=web_indexer.client,
-        model=indexer.model,
+        model=embedding_model,
         llm_client=llm_client,
     )
     # translator is initialized after Redis (needs glossary_store)
-
-    # DevOps indexer + log analyzer
-    devops_indexer = DevOpsIndexer(
-        qdrant_url=QDRANT_URL,
-        qdrant_api_key=QDRANT_API_KEY,
-        model=indexer.model,
-    )
-    log_analyzer = LogAnalyzer(llm_client=llm_client, devops_indexer=devops_indexer)
-
-    # Jira indexer (optional)
-    jira_indexer = JiraIndexer(
-        qdrant_url=QDRANT_URL,
-        qdrant_api_key=QDRANT_API_KEY,
-        model=indexer.model,
-        jira_base_url=JIRA_BASE_URL,
-        jira_email=JIRA_EMAIL,
-        jira_api_token=JIRA_API_TOKEN,
-    )
-    if jira_indexer.configured:
-        logger.info(f"Jira indexer configured for {JIRA_BASE_URL}")
-    else:
-        logger.info("Jira indexer: not configured (missing credentials)")
-
-    # Confluence indexer (optional — reuses Jira credentials if dedicated vars are empty)
-    confluence_indexer = ConfluenceIndexer(
-        qdrant_url=QDRANT_URL,
-        qdrant_api_key=QDRANT_API_KEY,
-        model=indexer.model,
-        llm_base_url=VLLM_BASE_URL,
-        llm_api_key=LITELLM_API_KEY,
-    )
-    if confluence_indexer.configured:
-        logger.info(f"Confluence indexer configured for {confluence_indexer._base_url}")
-    else:
-        logger.info("Confluence indexer: not configured (missing credentials)")
 
     # Create SDK agent (after llm_client is ready)
     try:
@@ -234,12 +162,12 @@ async def lifespan(app: FastAPI):
         redis_client = None
         session_store = None
 
-    # Translation glossary (Redis-backed for custom terms)
+    # Translation glossary (Redis-backed for custom terms, multi-language)
     glossary_store = GlossaryStore(redis=redis_client)
     if redis_client:
-        custom_terms = await glossary_store.load()
-        logger.info(f"Glossary loaded: {len(AIRSOFT_GLOSSARY_EN_ES)} built-in + {len(custom_terms)} custom terms")
-    translator = TranslationPipeline(llm_client=llm_client, glossary_store=glossary_store)
+        custom_count = await glossary_store.load_all_pairs()
+        logger.info(f"Glossary loaded: {len(GLOSSARY)} built-in terms × {len(SUPPORTED_LANGUAGES)} languages + {custom_count} custom entries")
+    translator = TranslationPipeline(llm_client=llm_client, glossary_store=glossary_store, model_id=llm_model_id)
 
     # Pre-load BM25 sparse encoder so first search is fast
     try:
@@ -257,76 +185,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Reranker load failed (search will work without reranking): {e}")
 
-    # Nightly Jira sync scheduler
-    scheduler = None
-    if JIRA_SYNC_ENABLED and jira_indexer.configured:
-        try:
-            from apscheduler.schedulers.asyncio import AsyncIOScheduler
-            from apscheduler.triggers.cron import CronTrigger
-
-            scheduler = AsyncIOScheduler()
-
-            async def _nightly_jira_sync():
-                try:
-                    logger.info("Nightly Jira sync starting...")
-                    job = await jira_indexer.sync_recent(since_hours=25)
-                    jira_import_jobs[job.job_id] = job
-                    logger.info(f"Nightly Jira sync done: {job.tickets_indexed} tickets, {job.chunks_indexed} chunks")
-                except Exception as e:
-                    logger.error(f"Nightly Jira sync failed: {e}")
-
-            scheduler.add_job(
-                _nightly_jira_sync,
-                CronTrigger(hour=JIRA_SYNC_HOUR, minute=0),
-                id="nightly_jira_sync",
-                replace_existing=True,
-            )
-            scheduler.start()
-            logger.info(f"Jira nightly sync scheduled at {JIRA_SYNC_HOUR}:00 UTC")
-        except Exception as e:
-            logger.warning(f"Failed to start Jira scheduler: {e}")
-
-    # Nightly Confluence sync scheduler
-    if CONFLUENCE_SYNC_ENABLED and confluence_indexer.configured:
-        try:
-            from apscheduler.schedulers.asyncio import AsyncIOScheduler
-            from apscheduler.triggers.cron import CronTrigger
-
-            if scheduler is None:
-                scheduler = AsyncIOScheduler()
-                scheduler.start()
-
-            async def _nightly_confluence_sync():
-                try:
-                    logger.info("Nightly Confluence sync starting...")
-                    job = await confluence_indexer.sync_recent(since_hours=25)
-                    confluence_import_jobs[job.job_id] = job
-                    logger.info(f"Nightly Confluence sync done: {job.pages_indexed} pages, {job.chunks_indexed} chunks")
-                except Exception as e:
-                    logger.error(f"Nightly Confluence sync failed: {e}")
-
-            scheduler.add_job(
-                _nightly_confluence_sync,
-                CronTrigger(hour=CONFLUENCE_SYNC_HOUR, minute=0),
-                id="nightly_confluence_sync",
-                replace_existing=True,
-            )
-            logger.info(f"Confluence nightly sync scheduled at {CONFLUENCE_SYNC_HOUR}:00 UTC")
-        except Exception as e:
-            logger.warning(f"Failed to start Confluence scheduler: {e}")
-
     logger.info("RAG service initialized successfully")
 
     yield
 
-    # Shutdown scheduler
-    if scheduler:
-        scheduler.shutdown(wait=False)
-
 
 app = FastAPI(
     title="Pocharlies Qdrant RAG Service",
-    description="Web indexing, code retrieval, and tool execution for RAG pipelines",
+    description="Web indexing, product catalog, and RAG pipelines",
     version="2.0.0",
     lifespan=lifespan
 )
@@ -344,39 +210,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # Request/Response Models
-class RetrieveRequest(BaseModel):
-    query: str
-    top_k: int = 8
-    repo: Optional[str] = None
-    language: Optional[str] = None
-    rerank: bool = True
-
-
-class RetrieveResponse(BaseModel):
-    results: List[dict]
-
-
-class IndexRequest(BaseModel):
-    repo_path: str
-    repo_name: Optional[str] = None
-
-
-class DeleteRepoRequest(BaseModel):
-    repo_name: str
-
-
 class ChatRequest(BaseModel):
     query: str
     model: Optional[str] = None  # auto-discovered at startup
     use_rag: bool = True
     use_tools: bool = True
-    repo: Optional[str] = None
     max_tokens: int = 4096
-
-
-class ToolRequest(BaseModel):
-    tool_name: str
-    arguments: dict
 
 
 class WebIndexRequest(BaseModel):
@@ -396,21 +235,10 @@ class WebSearchRequest(BaseModel):
 class UnifiedSearchRequest(BaseModel):
     query: str
     top_k: int = 10
-    collection: str = "all"  # "all" | "web" | "code" | "products" | "competitors" | "devops" | "jira" | "confluence"
+    collection: str = "all"  # "all" | "web" | "products" | "competitors"
     domain: Optional[str] = None
-    repo: Optional[str] = None
-    language: Optional[str] = None
     brand: Optional[str] = None
     category: Optional[str] = None
-    # Jira-specific filters
-    project: Optional[str] = None
-    assignee: Optional[str] = None
-    issue_type: Optional[str] = None
-    # Confluence-specific filters
-    space: Optional[str] = None
-    author: Optional[str] = None
-    department: Optional[str] = None
-    topic: Optional[str] = None
     rerank: bool = True
 
 
@@ -465,50 +293,14 @@ class TranslateRequest(BaseModel):
 class GlossaryEntryRequest(BaseModel):
     source: str
     target: str
+    source_lang: str = "en"
+    target_lang: str = "es"
 
 
 class GlossaryBulkRequest(BaseModel):
     entries: Dict[str, str]  # source_term -> target_term
-
-
-class DevOpsIndexRequest(BaseModel):
-    path: str
-    recursive: bool = True
-
-
-class DevOpsSearchRequest(BaseModel):
-    query: str
-    top_k: int = 5
-    doc_type: Optional[str] = None
-
-
-class LogAnalyzeRequest(BaseModel):
-    log_text: str
-    service: str = "unknown"
-
-
-class JiraImportRequest(BaseModel):
-    project: Optional[str] = None
-
-
-class JiraSyncRequest(BaseModel):
-    since_hours: int = 24
-
-
-class ConfluenceImportRequest(BaseModel):
-    space: Optional[str] = None
-
-class ConfluenceSyncRequest(BaseModel):
-    since_hours: int = 24
-
-
-class JiraSearchRequest(BaseModel):
-    query: str = ""
-    top_k: int = 8
-    project: Optional[str] = None
-    assignee: Optional[str] = None
-    ticket_key: Optional[str] = None
-    issue_type: Optional[str] = None
+    source_lang: str = "en"
+    target_lang: str = "es"
 
 
 # ── Dashboard ─────────────────────────────────────────────────
@@ -618,108 +410,9 @@ async def health():
         "services": {
             "reranker": RERANKER_ENABLED and get_reranker() is not None,
             "shopify": shopify_client is not None,
-            "devops_indexer": devops_indexer is not None,
-            "jira_indexer": jira_indexer is not None and jira_indexer.configured,
-            "confluence_indexer": confluence_indexer is not None and confluence_indexer.configured,
             "product_indexer": product_indexer is not None,
         },
     }
-
-
-# ── Code Retrieval ────────────────────────────────────────────
-
-@app.post("/retrieve", response_model=RetrieveResponse)
-async def retrieve_code(request: RetrieveRequest):
-    """Retrieve relevant code chunks for a query"""
-    try:
-        reranker = get_reranker()
-        effective_top_k = request.top_k * 4 if (reranker and request.rerank) else request.top_k
-
-        results = retriever.retrieve(
-            query=request.query,
-            top_k=effective_top_k,
-            repo_filter=request.repo,
-            language_filter=request.language
-        )
-
-        result_dicts = [
-            {
-                "path": r.path,
-                "repo": r.repo,
-                "start_line": r.start_line,
-                "end_line": r.end_line,
-                "text": r.text,
-                "score": r.score,
-                "symbols": r.symbols
-            }
-            for r in results
-        ]
-
-        if reranker and request.rerank and result_dicts:
-            result_dicts = reranker.rerank(request.query, result_dicts, top_k=request.top_k)
-
-        return RetrieveResponse(results=result_dicts)
-    except Exception as e:
-        logger.error(f"Error retrieving: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/index")
-async def index_repository(request: IndexRequest):
-    """Index a repository into the vector database"""
-    try:
-        chunks = indexer.index_repository(
-            repo_path=request.repo_path,
-            repo_name=request.repo_name
-        )
-        return {"status": "success", "chunks_indexed": chunks}
-    except Exception as e:
-        logger.error(f"Error indexing: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/delete")
-async def delete_repository(request: DeleteRepoRequest):
-    """Delete a repository from the vector database"""
-    try:
-        success = indexer.delete_repository(request.repo_name)
-        if success:
-            return {"status": "success", "message": f"Deleted repository: {request.repo_name}"}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to delete repository")
-    except Exception as e:
-        logger.error(f"Error deleting: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/tool")
-async def execute_tool(request: ToolRequest):
-    """Execute a tool directly"""
-    tool_map = {
-        "search_repo": tools.search_repo,
-        "read_file": tools.read_file,
-        "list_files": tools.list_files,
-        "run_command": tools.run_command
-    }
-
-    if request.tool_name not in tool_map:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown tool: {request.tool_name}. Available: {list(tool_map.keys())}"
-        )
-
-    try:
-        result = tool_map[request.tool_name](**request.arguments)
-        return {"result": result}
-    except Exception as e:
-        logger.error(f"Error executing tool: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/tools")
-async def get_tools():
-    """Get available tool definitions"""
-    return {"tools": TOOL_DEFINITIONS}
 
 
 @app.post("/chat")
@@ -736,8 +429,6 @@ async def chat_with_rag(request: ChatRequest):
 - **Product Catalog**: Products from the Shopify store (titles, descriptions, prices, brands)
 - **Web Pages**: Crawled website content from various indexed sites
 - **Competitor Products**: Product data from competitor stores
-- **Code Index**: Source code from indexed repositories
-- **DevOps Docs**: DevOps documentation and runbooks
 
 When answering:
 1. Use the provided RAG context to give factual, data-driven answers
@@ -788,62 +479,6 @@ When answering:
         except Exception as e:
             logger.warning(f"Competitor search failed in chat: {e}")
 
-        try:
-            # Code (only if query seems code-related)
-            code_keywords = {"code", "function", "class", "file", "bug", "error", "import", "def ", "api", "endpoint"}
-            if any(kw in request.query.lower() for kw in code_keywords) or request.repo:
-                code_results = retriever.retrieve(query=request.query, top_k=5, repo_filter=request.repo)
-                if code_results:
-                    code_block = "\n\n".join([
-                        f"[{r.repo}/{r.path}#L{r.start_line}-{r.end_line}]\n```\n{r.text}\n```"
-                        for r in code_results
-                    ])
-                    context_sections.append(f"## Code Results\n{code_block}")
-        except Exception as e:
-            logger.warning(f"Code search failed in chat: {e}")
-
-        try:
-            # DevOps docs
-            devops_keywords = {"deploy", "docker", "kubernetes", "k8s", "ci", "cd", "pipeline", "server", "nginx", "devops", "log", "monitor"}
-            if any(kw in request.query.lower() for kw in devops_keywords):
-                devops_results = devops_indexer.search(query=request.query, top_k=5)
-                if devops_results:
-                    devops_block = "\n".join([
-                        f"- {r.get('title', 'Untitled')}: {r.get('text', '')[:300]}"
-                        for r in devops_results
-                    ])
-                    context_sections.append(f"## DevOps Docs Results\n{devops_block}")
-        except Exception as e:
-            logger.warning(f"DevOps search failed in chat: {e}")
-
-        try:
-            # Jira tickets
-            jira_keywords = {"ticket", "jira", "bug", "task", "story", "sprint", "epic", "issue", "backlog"}
-            if any(kw in request.query.lower() for kw in jira_keywords):
-                jira_results = jira_indexer.search(query=request.query, top_k=5)
-                if jira_results:
-                    jira_block = "\n".join([
-                        f"- [{r.get('ticket_key', '')}] {r.get('summary', '')} ({r.get('status', '')}) — {r.get('text', '')[:300]}"
-                        for r in jira_results
-                    ])
-                    context_sections.append(f"## Jira Ticket Results\n{jira_block}")
-        except Exception as e:
-            logger.warning(f"Jira search failed in chat: {e}")
-
-        try:
-            # Confluence pages
-            confluence_keywords = {"confluence", "wiki", "page", "documentation", "docs", "knowledge", "onboarding", "process"}
-            if any(kw in request.query.lower() for kw in confluence_keywords):
-                conf_results = confluence_indexer.search(query=request.query, top_k=5)
-                if conf_results:
-                    conf_block = "\n".join([
-                        f"- [{r.get('page_title', '')}] ({r.get('space_key', '')}) — {r.get('text', '')[:300]}"
-                        for r in conf_results
-                    ])
-                    context_sections.append(f"## Confluence Page Results\n{conf_block}")
-        except Exception as e:
-            logger.warning(f"Confluence search failed in chat: {e}")
-
         if context_sections:
             full_context = "\n\n".join(context_sections)
             messages.append({
@@ -869,51 +504,17 @@ When answering:
             "model": model,
             "messages": messages,
             "max_tokens": request.max_tokens,
-            "temperature": 0.2
+            "temperature": 0.2,
+            "user": "rag:chat",
         }
-
-        if request.use_tools:
-            call_kwargs["tools"] = TOOL_DEFINITIONS
-            call_kwargs["tool_choice"] = "auto"
 
         response = llm_client.chat.completions.create(**call_kwargs)
 
         message = response.choices[0].message
 
-        if message.tool_calls:
-            tool_results = []
-            for tool_call in message.tool_calls:
-                func_name = tool_call.function.name
-                func_args = json.loads(tool_call.function.arguments)
-
-                tool_map = {
-                    "search_repo": tools.search_repo,
-                    "read_file": tools.read_file,
-                    "list_files": tools.list_files,
-                    "run_command": tools.run_command
-                }
-
-                if func_name in tool_map:
-                    result = tool_map[func_name](**func_args)
-                    tool_results.append({
-                        "tool_call_id": tool_call.id,
-                        "role": "tool",
-                        "content": result
-                    })
-
-            messages.append(message.model_dump())
-            messages.extend(tool_results)
-
-            final_response = llm_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=request.max_tokens,
-                temperature=0.2
-            )
-
-            return {
-                "response": final_response.choices[0].message.content,
-                "tools_used": [tc.function.name for tc in message.tool_calls],
+        return {
+            "response": message.content,
+            "tools_used": [],
                 "model": model
             }
 
@@ -924,22 +525,6 @@ When answering:
         }
     except Exception as e:
         logger.error(f"Error in chat: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/stats")
-async def get_stats():
-    """Get collection statistics"""
-    try:
-        collection_info = retriever.client.get_collection(retriever.collection_name)
-        return {
-            "collection": retriever.collection_name,
-            "points_count": collection_info.points_count,
-            "vectors_count": collection_info.vectors_count,
-            "status": collection_info.status
-        }
-    except Exception as e:
-        logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1179,29 +764,6 @@ async def unified_search(request: UnifiedSearchRequest):
         except Exception as e:
             logger.warning(f"Web search failed: {e}")
 
-    if request.collection in ("all", "code"):
-        try:
-            code_results = retriever.retrieve(
-                query=request.query,
-                top_k=request.top_k,
-                repo_filter=request.repo,
-                language_filter=request.language,
-            )
-            for r in code_results:
-                results.append({
-                    "path": r.path,
-                    "repo": r.repo,
-                    "start_line": r.start_line,
-                    "end_line": r.end_line,
-                    "text": r.text,
-                    "score": round(r.score, 4),
-                    "symbols": r.symbols,
-                    "collection": "code_index",
-                    "source_type": "code",
-                })
-        except Exception as e:
-            logger.warning(f"Code search failed: {e}")
-
     if request.collection in ("all", "products"):
         try:
             prod_results = product_indexer.search(
@@ -1230,49 +792,6 @@ async def unified_search(request: UnifiedSearchRequest):
         except Exception as e:
             logger.warning(f"Competitor search failed: {e}")
 
-    if request.collection in ("all", "devops"):
-        try:
-            devops_results = devops_indexer.search(
-                query=request.query,
-                top_k=request.top_k,
-            )
-            for r in devops_results:
-                r["collection"] = "devops_docs"
-            results.extend(devops_results)
-        except Exception as e:
-            logger.warning(f"DevOps search failed: {e}")
-
-    if request.collection in ("all", "jira"):
-        try:
-            jira_results = jira_indexer.search(
-                query=request.query,
-                top_k=request.top_k,
-                project=request.project,
-                assignee=request.assignee,
-                issue_type=request.issue_type,
-            )
-            for r in jira_results:
-                r["collection"] = "jira_tickets"
-            results.extend(jira_results)
-        except Exception as e:
-            logger.warning(f"Jira search failed: {e}")
-
-    if request.collection in ("all", "confluence"):
-        try:
-            conf_results = confluence_indexer.search(
-                query=request.query,
-                top_k=request.top_k,
-                space=request.space,
-                author=request.author,
-                department=request.department,
-                topic=request.topic,
-            )
-            for r in conf_results:
-                r["collection"] = "confluence_pages"
-            results.extend(conf_results)
-        except Exception as e:
-            logger.warning(f"Confluence search failed: {e}")
-
     if request.collection == "all" and results:
         results = _cross_collection_rrf(results, request.top_k)
 
@@ -1286,7 +805,7 @@ async def unified_search(request: UnifiedSearchRequest):
 
 @app.get("/web/collections")
 async def web_collections():
-    """Get stats for all RAG collections (code_index + web_pages)."""
+    """Get stats for all RAG collections."""
     return {"collections": web_indexer.get_collection_stats()}
 
 
@@ -1656,40 +1175,50 @@ async def translate_normalize(product: dict):
 
 
 @app.get("/glossary")
-async def glossary_list():
-    """List all glossary entries (built-in + custom)."""
-    custom = await glossary_store.get_all()
+async def glossary_list(source_lang: str = "en", target_lang: str = "es"):
+    """List glossary entries (built-in + custom) for a language pair."""
+    builtin = get_glossary_for_pair(source_lang, target_lang)
+    custom = await glossary_store.get_all(source_lang, target_lang)
     return {
-        "builtin_count": len(AIRSOFT_GLOSSARY_EN_ES),
+        "source_lang": source_lang,
+        "target_lang": target_lang,
+        "builtin_count": len(builtin),
         "custom_count": len(custom),
-        "builtin": AIRSOFT_GLOSSARY_EN_ES,
+        "builtin": builtin,
         "custom": custom,
+        "languages": SUPPORTED_LANGUAGES,
     }
 
 
 @app.post("/glossary")
 async def glossary_add(request: GlossaryEntryRequest):
-    """Add or update a custom glossary entry."""
+    """Add or update a custom glossary entry for a language pair."""
     if not request.source.strip() or not request.target.strip():
         raise HTTPException(status_code=400, detail="Both source and target terms are required")
-    await glossary_store.add(request.source, request.target)
-    return {"status": "added", "source": request.source.strip().lower(), "target": request.target.strip()}
+    await glossary_store.add(request.source, request.target, request.source_lang, request.target_lang)
+    return {
+        "status": "added",
+        "source": request.source.strip().lower(),
+        "target": request.target.strip(),
+        "source_lang": request.source_lang,
+        "target_lang": request.target_lang,
+    }
 
 
 @app.post("/glossary/bulk")
 async def glossary_bulk_add(request: GlossaryBulkRequest):
-    """Add multiple glossary entries at once."""
-    count = await glossary_store.add_bulk(request.entries)
-    return {"status": "added", "count": count}
+    """Add multiple glossary entries for a language pair."""
+    count = await glossary_store.add_bulk(request.entries, request.source_lang, request.target_lang)
+    return {"status": "added", "count": count, "source_lang": request.source_lang, "target_lang": request.target_lang}
 
 
 @app.delete("/glossary/{term:path}")
-async def glossary_delete(term: str):
-    """Remove a custom glossary entry."""
-    existed = await glossary_store.remove(term)
+async def glossary_delete(term: str, source_lang: str = "en", target_lang: str = "es"):
+    """Remove a custom glossary entry for a language pair."""
+    existed = await glossary_store.remove(term, source_lang, target_lang)
     if not existed:
-        raise HTTPException(status_code=404, detail=f"Term not found: {term}")
-    return {"status": "deleted", "term": term}
+        raise HTTPException(status_code=404, detail=f"Term not found: {term} ({source_lang}→{target_lang})")
+    return {"status": "deleted", "term": term, "source_lang": source_lang, "target_lang": target_lang}
 
 
 @app.get("/glossary/test")
@@ -1698,364 +1227,17 @@ async def glossary_test(text: str, source_lang: str = "en", target_lang: str = "
     relevant = glossary_store.get_relevant(text, source_lang, target_lang)
     return {
         "text": text,
+        "source_lang": source_lang,
+        "target_lang": target_lang,
         "matched_terms": len(relevant),
         "glossary": relevant,
     }
 
 
-# ── DevOps Endpoints ──────────────────────────────────────────
-
-
-@app.post("/devops/index")
-async def devops_index(request: DevOpsIndexRequest):
-    """Index documents from a path."""
-    def progress_cb(j: DevOpsIndexJob):
-        devops_index_jobs[j.job_id] = j
-
-    job = await devops_indexer.index_path(
-        path=request.path,
-        recursive=request.recursive,
-        progress_callback=progress_cb,
-    )
-    devops_index_jobs[job.job_id] = job
-    return job.to_dict()
-
-
-@app.get("/devops/sources")
-async def devops_sources():
-    """List indexed DevOps document sources."""
-    return {"sources": devops_indexer.get_sources()}
-
-
-@app.delete("/devops/source/{source_path:path}")
-async def devops_delete_source(source_path: str):
-    """Delete a DevOps document source."""
-    success = devops_indexer.delete_source(source_path)
-    if success:
-        return {"status": "deleted", "source_path": source_path}
-    raise HTTPException(status_code=500, detail=f"Failed to delete: {source_path}")
-
-
-@app.post("/devops/search")
-async def devops_search(request: DevOpsSearchRequest):
-    """Search DevOps docs (hybrid)."""
-    results = devops_indexer.search(
-        query=request.query,
-        top_k=request.top_k,
-        doc_type_filter=request.doc_type,
-    )
-    return {"results": results, "query": request.query}
-
-
-@app.post("/devops/analyze-logs")
-async def devops_analyze_logs(request: LogAnalyzeRequest):
-    """Start log analysis job."""
-    job = await log_analyzer.analyze_logs(
-        log_text=request.log_text,
-        source_service=request.service,
-    )
-    log_analysis_jobs[job.job_id] = job
-    return {
-        "job_id": job.job_id,
-        "status": job.status,
-        "categories": job.categories,
-        "results_count": len(job.results),
-    }
-
-
-@app.get("/devops/analyze-logs/{job_id}")
-async def devops_log_analysis_result(job_id: str):
-    """Get log analysis results."""
-    job = log_analysis_jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
-    return {
-        **job.to_dict(),
-        "results": job.results,
-    }
-
-
-# ── Jira Endpoints ────────────────────────────────────────────
-
-
-@app.post("/jira/import")
-async def jira_import(request: JiraImportRequest):
-    """Start importing Jira tickets (runs in background, returns job_id immediately)."""
-    if not jira_indexer or not jira_indexer.configured:
-        raise HTTPException(status_code=400, detail="Jira not configured. Set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.")
-
-    job_id = uuid.uuid4().hex[:12]
-
-    async def _run():
-        def progress_cb(j: JiraImportJob):
-            jira_import_jobs[j.job_id] = j
-        job = await jira_indexer.import_all(project=request.project, progress_callback=progress_cb, job_id=job_id)
-        jira_import_jobs[job.job_id] = job
-
-    asyncio.get_running_loop().create_task(_run())
-    return {"job_id": job_id, "status": "running"}
-
-
-@app.get("/jira/import/status/{job_id}")
-async def jira_import_status(job_id: str):
-    """Get Jira import job status."""
-    job = jira_import_jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
-    return job.to_dict()
-
-
-@app.post("/jira/sync")
-async def jira_sync(request: JiraSyncRequest):
-    """Sync recently updated Jira tickets (runs in background, returns job_id immediately)."""
-    if not jira_indexer or not jira_indexer.configured:
-        raise HTTPException(status_code=400, detail="Jira not configured.")
-
-    job_id = uuid.uuid4().hex[:12]
-
-    async def _run():
-        def progress_cb(j: JiraImportJob):
-            jira_import_jobs[j.job_id] = j
-        job = await jira_indexer.sync_recent(since_hours=request.since_hours, progress_callback=progress_cb, job_id=job_id)
-        jira_import_jobs[job.job_id] = job
-
-    asyncio.get_running_loop().create_task(_run())
-    return {"job_id": job_id, "status": "running"}
-
-
-@app.get("/jira/search")
-async def jira_search(
-    query: str = "",
-    top_k: int = 8,
-    project: Optional[str] = None,
-    assignee: Optional[str] = None,
-    ticket_key: Optional[str] = None,
-    issue_type: Optional[str] = None,
-):
-    """Search indexed Jira tickets."""
-    if not jira_indexer:
-        raise HTTPException(status_code=400, detail="Jira indexer not initialized.")
-
-    results = jira_indexer.search(
-        query=query,
-        top_k=top_k,
-        project=project,
-        assignee=assignee,
-        ticket_key=ticket_key,
-        issue_type=issue_type,
-    )
-    return {"results": results, "query": query}
-
-
-@app.get("/jira/sources")
-async def jira_sources():
-    """List indexed Jira projects with ticket/chunk counts."""
-    if not jira_indexer:
-        raise HTTPException(status_code=400, detail="Jira indexer not initialized.")
-    return {"sources": jira_indexer.get_sources()}
-
-
-@app.delete("/jira/source/{project}")
-async def jira_delete_project(project: str):
-    """Delete all indexed data for a Jira project."""
-    if not jira_indexer:
-        raise HTTPException(status_code=400, detail="Jira indexer not initialized.")
-    success = jira_indexer.delete_project(project)
-    if success:
-        return {"status": "deleted", "project": project}
-    raise HTTPException(status_code=500, detail=f"Failed to delete project: {project}")
-
-
-@app.get("/jira/filters")
-async def jira_filters():
-    """Return unique assignees and projects for search filter dropdowns."""
-    if not jira_indexer or not jira_indexer.configured:
-        return {"assignees": [], "projects": []}
-    return jira_indexer.get_filter_options()
-
-
-@app.get("/jira/status")
-async def jira_status():
-    """Get comprehensive Jira indexer status for the dashboard."""
-    configured = jira_indexer is not None and jira_indexer.configured
-    result = {
-        "configured": configured,
-        "base_url": jira_indexer._jira_base_url if configured else None,
-        "email": jira_indexer._jira_email if configured else None,
-        "nightly_sync_enabled": os.environ.get("JIRA_SYNC_ENABLED", "false").lower() == "true",
-        "nightly_sync_hour": int(os.environ.get("JIRA_SYNC_HOUR", "2")),
-    }
-
-    # Active/recent jobs
-    active_jobs = []
-    for j in jira_import_jobs.values():
-        active_jobs.append(j.to_dict())
-    # Sort by started_at descending, limit to 5
-    active_jobs.sort(key=lambda x: x.get("started_at", ""), reverse=True)
-    result["jobs"] = active_jobs[:5]
-
-    # Collection stats from Qdrant
-    if configured:
-        try:
-            sources = jira_indexer.get_sources()
-            result["sources"] = sources
-            result["total_tickets"] = sum(s.get("ticket_count", 0) for s in sources)
-            result["total_chunks"] = sum(s.get("chunk_count", 0) for s in sources)
-            # Find the latest last_indexed across all projects
-            last_times = [s.get("last_indexed") for s in sources if s.get("last_indexed")]
-            result["last_indexed"] = max(last_times) if last_times else None
-        except Exception:
-            result["sources"] = []
-            result["total_tickets"] = 0
-            result["total_chunks"] = 0
-            result["last_indexed"] = None
-
-    return result
-
-
-@app.get("/jira/ticket/{key}")
-async def jira_ticket_live(key: str):
-    """Fetch a ticket from Jira API (live, not from Qdrant index)."""
-    if not jira_indexer or not jira_indexer.configured:
-        raise HTTPException(status_code=400, detail="Jira not configured.")
-    try:
-        return await jira_indexer.get_ticket_live(key)
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=f"Jira API error: {e.response.text[:200]}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)[:200])
-
-
-# ── Confluence Endpoints ─────────────────────────────────────
-
-
-@app.post("/confluence/import")
-async def confluence_import(request: ConfluenceImportRequest):
-    """Start importing Confluence pages (runs in background)."""
-    if not confluence_indexer or not confluence_indexer.configured:
-        raise HTTPException(status_code=400, detail="Confluence not configured.")
-
-    job_id = uuid.uuid4().hex[:12]
-
-    async def _run():
-        def progress_cb(j: ConfluenceImportJob):
-            confluence_import_jobs[j.job_id] = j
-        job = await confluence_indexer.import_all(space=request.space, progress_callback=progress_cb, job_id=job_id)
-        confluence_import_jobs[job.job_id] = job
-
-    asyncio.get_running_loop().create_task(_run())
-    return {"job_id": job_id, "status": "running"}
-
-
-@app.get("/confluence/import/status/{job_id}")
-async def confluence_import_status(job_id: str):
-    """Get Confluence import job status."""
-    job = confluence_import_jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return job.to_dict()
-
-
-@app.post("/confluence/sync")
-async def confluence_sync(request: ConfluenceSyncRequest):
-    """Sync recently updated Confluence pages."""
-    if not confluence_indexer or not confluence_indexer.configured:
-        raise HTTPException(status_code=400, detail="Confluence not configured.")
-
-    job_id = uuid.uuid4().hex[:12]
-
-    async def _run():
-        def progress_cb(j: ConfluenceImportJob):
-            confluence_import_jobs[j.job_id] = j
-        job = await confluence_indexer.sync_recent(since_hours=request.since_hours, progress_callback=progress_cb, job_id=job_id)
-        confluence_import_jobs[job.job_id] = job
-
-    asyncio.get_running_loop().create_task(_run())
-    return {"job_id": job_id, "status": "running"}
-
-
-@app.get("/confluence/search")
-async def confluence_search(
-    query: str = "",
-    top_k: int = 10,
-    space: Optional[str] = None,
-    author: Optional[str] = None,
-    label: Optional[str] = None,
-    department: Optional[str] = None,
-    topic: Optional[str] = None,
-):
-    """Search indexed Confluence pages."""
-    if not confluence_indexer:
-        raise HTTPException(status_code=400, detail="Confluence indexer not initialized.")
-    results = confluence_indexer.search(
-        query=query, top_k=top_k, space=space, author=author,
-        label=label, department=department, topic=topic,
-    )
-    return {"results": results, "query": query, "collection": "confluence"}
-
-
-@app.get("/confluence/sources")
-async def confluence_sources():
-    """List indexed Confluence spaces with page/chunk counts."""
-    if not confluence_indexer:
-        return {"sources": []}
-    return {"sources": confluence_indexer.get_sources()}
-
-
-@app.delete("/confluence/source/{space_key}")
-async def confluence_delete_source(space_key: str):
-    """Delete all indexed data for a Confluence space."""
-    if not confluence_indexer:
-        raise HTTPException(status_code=400, detail="Confluence indexer not initialized.")
-    ok = confluence_indexer.delete_space(space_key)
-    if not ok:
-        raise HTTPException(status_code=500, detail="Delete failed")
-    return {"deleted": space_key}
-
-
-@app.get("/confluence/filters")
-async def confluence_filters():
-    """Return unique spaces, authors, departments, and topics for search filters."""
-    if not confluence_indexer or not confluence_indexer.configured:
-        return {"spaces": [], "authors": [], "departments": [], "topics": []}
-    return confluence_indexer.get_filters()
-
-
-@app.get("/confluence/spaces")
-async def confluence_spaces():
-    """List available Confluence spaces (live from API)."""
-    if not confluence_indexer or not confluence_indexer.configured:
-        raise HTTPException(status_code=400, detail="Confluence not configured.")
-    spaces = await confluence_indexer.fetch_spaces()
-    return {"spaces": [{"key": s.get("key", ""), "name": s.get("name", ""), "type": s.get("type", "")} for s in spaces]}
-
-
-@app.get("/confluence/status")
-async def confluence_status():
-    """Get comprehensive Confluence indexer status for the dashboard."""
-    configured = confluence_indexer is not None and confluence_indexer.configured
-    sources = confluence_indexer.get_sources() if configured else []
-    total_pages = sum(s["page_count"] for s in sources)
-    total_chunks = sum(s["chunk_count"] for s in sources)
-    last_times = [s["last_indexed"] for s in sources if s.get("last_indexed")]
-    last_indexed = max(last_times) if last_times else None
-
-    active_jobs = []
-    for j in confluence_import_jobs.values():
-        active_jobs.append(j.to_dict())
-    active_jobs.sort(key=lambda x: x.get("started_at", ""), reverse=True)
-
-    return {
-        "configured": configured,
-        "base_url": confluence_indexer._base_url if configured else None,
-        "total_pages": total_pages,
-        "total_chunks": total_chunks,
-        "sources": sources,
-        "last_indexed": last_indexed,
-        "nightly_sync_enabled": CONFLUENCE_SYNC_ENABLED,
-        "nightly_sync_hour": CONFLUENCE_SYNC_HOUR,
-        "jobs": active_jobs[:5],
-    }
+@app.get("/glossary/languages")
+async def glossary_languages():
+    """List all supported languages."""
+    return {"languages": SUPPORTED_LANGUAGES}
 
 
 # ── Agent Endpoints ───────────────────────────────────────────
@@ -2080,10 +1262,7 @@ def _cleanup_old_agent_tasks():
 def _make_services(task: AgentTask = None) -> AgentServices:
     return AgentServices(
         web_indexer=web_indexer,
-        retriever=retriever,
         product_indexer=product_indexer,
-        devops_indexer=devops_indexer,
-        log_analyzer=log_analyzer,
         llm_client=llm_client,
         task=task,
     )

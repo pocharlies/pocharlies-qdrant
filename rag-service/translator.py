@@ -317,11 +317,26 @@ def pack_batches(texts: List[str], max_input_tokens: int = 12000, min_batch: int
 
 
 class TranslationPipeline:
-    def __init__(self, llm_client, glossary_store: Optional[GlossaryStore] = None):
+    MAX_CONCURRENT_CHUNKS = 8
+    MAX_INPUT_TOKENS = 12000
+
+    def __init__(self, llm_client, glossary_store: Optional[GlossaryStore] = None,
+                 model_id: Optional[str] = None):
         self.llm_client = llm_client
         self.glossary = glossary_store or GlossaryStore()
+        self._model_id = model_id
 
-    MAX_CONCURRENT_CHUNKS = 32
+    async def _get_model_id(self) -> Optional[str]:
+        """Return cached model ID, discovering once if needed."""
+        if self._model_id:
+            return self._model_id
+        try:
+            loop = asyncio.get_event_loop()
+            models = await loop.run_in_executor(None, self.llm_client.models.list)
+            self._model_id = models.data[0].id if models.data else None
+        except Exception as e:
+            logger.warning(f"Model discovery failed: {e}")
+        return self._model_id
 
     async def translate_batch(
         self,
