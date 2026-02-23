@@ -411,22 +411,6 @@ class TranslationPipeline:
             progress_callback(job)
         return job
 
-    def _build_glossary_prompt(self, texts: List[str], source_lang: str, target_lang: str) -> str:
-        """Build a glossary section for the prompt based on terms found in the input."""
-        combined_text = " ".join(texts)
-        relevant = self.glossary.get_relevant(combined_text, source_lang, target_lang)
-
-        if not relevant:
-            return ""
-
-        lines = [f"  - \"{term}\" → \"{translation}\"" for term, translation in relevant.items()]
-        return (
-            "\n\n## MANDATORY Terminology Glossary\n"
-            "You MUST use these exact translations for the following terms. "
-            "Do NOT deviate from this glossary:\n"
-            + "\n".join(lines)
-        )
-
     def _build_glossary_prompt_from_text(self, combined_text: str, source_lang: str, target_lang: str) -> str:
         """Build glossary section from pre-combined text. Used for pre-computation."""
         relevant = self.glossary.get_relevant(combined_text, source_lang, target_lang)
