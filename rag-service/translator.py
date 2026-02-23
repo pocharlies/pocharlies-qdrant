@@ -446,8 +446,14 @@ class TranslationPipeline:
         source_lang: str,
         target_lang: str,
         rag_context: Optional[str] = None,
+        glossary_section: str = "",
+        _depth: int = 0,
     ) -> List[str]:
-        """Single LLM call to translate a small batch of texts."""
+        """Single LLM call to translate a batch of texts.
+
+        On failure, bisects the batch and retries each half (up to 3 levels deep).
+        Uses cached model_id and pre-computed glossary section.
+        """
         source_name = LANG_NAMES.get(source_lang, source_lang)
         target_name = LANG_NAMES.get(target_lang, target_lang)
 
@@ -457,8 +463,6 @@ class TranslationPipeline:
             target_name=target_name,
         )
 
-        # Inject relevant glossary terms
-        glossary_section = self._build_glossary_prompt(texts, source_lang, target_lang)
         if glossary_section:
             system_prompt += glossary_section
 
@@ -466,18 +470,18 @@ class TranslationPipeline:
             system_prompt += f"\n\n## Reference: Similar products from our catalog\n{rag_context}"
 
         # Number the texts for clarity
-        numbered = "\n\n".join(
-            f"[{i+1}] {text}" for i, text in enumerate(texts)
-        )
+        numbered = "\n\n".join(f"[{i+1}] {text}" for i, text in enumerate(texts))
+
+        # Adaptive max_tokens: estimate output ~1.5x input, cap at 16384
+        input_tokens = sum(estimate_tokens(t) for t in texts)
+        max_tokens = min(max(int(input_tokens * 1.5), 1024), 16384)
 
         try:
-            loop = asyncio.get_event_loop()
-            models = await loop.run_in_executor(None, self.llm_client.models.list)
-            model_id = models.data[0].id if models.data else None
-
+            model_id = await self._get_model_id()
             if not model_id:
-                return texts  # fallback: return originals
+                return texts
 
+            loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: self.llm_client.chat.completions.create(
@@ -486,7 +490,7 @@ class TranslationPipeline:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Translate these {len(texts)} texts:\n\n{numbered}"},
                     ],
-                    max_tokens=4096,
+                    max_tokens=max_tokens,
                     temperature=0.2,
                     timeout=300,
                     user="rag:translate",
@@ -497,8 +501,24 @@ class TranslationPipeline:
             return self._parse_translations(response_text, len(texts), texts)
 
         except Exception as e:
-            logger.warning(f"Translation chunk failed: {e}")
-            return texts  # fallback
+            # Bisect retry: split batch in half and retry each
+            if _depth < 3 and len(texts) > 3:
+                mid = len(texts) // 2
+                logger.warning(f"Chunk failed ({len(texts)} texts, depth={_depth}), bisecting: {e}")
+                left = await self._translate_chunk(
+                    texts[:mid], source_lang, target_lang,
+                    rag_context=rag_context, glossary_section=glossary_section,
+                    _depth=_depth + 1,
+                )
+                right = await self._translate_chunk(
+                    texts[mid:], source_lang, target_lang,
+                    rag_context=rag_context, glossary_section=glossary_section,
+                    _depth=_depth + 1,
+                )
+                return left + right
+
+            logger.warning(f"Translation chunk failed (depth={_depth}, {len(texts)} texts): {e}")
+            return texts  # fallback: return originals
 
     @staticmethod
     def _parse_translations(response_text: str, expected_count: int, originals: List[str]) -> List[str]:
