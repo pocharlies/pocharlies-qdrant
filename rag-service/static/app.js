@@ -35,18 +35,17 @@ var _tabLoaded = {};
 
 var _agentPollInterval = null;
 
-function onTabActivated(tabId) {
+async function onTabActivated(tabId) {
   if (_tabLoaded[tabId]) return;
   _tabLoaded[tabId] = true;
   if (tabId === 'sources') {
-    fetchJiraStatus();
-    fetchConfluenceStatus();
     fetchProductStats();
   } else if (tabId === 'search') {
     // no-op — search tab is ready, domains load via lazy dropdown
   } else if (tabId === 'ai') {
     checkAgentStatus();
     fetchAgentTasks();
+    await initLanguageDropdowns();
     loadGlossary();
     if (!_agentPollInterval) {
       _agentPollInterval = setInterval(fetchAgentTasks, 10000);
@@ -90,7 +89,7 @@ async function fetchRagCollections() {
   const el = document.getElementById('rag-collections');
   if (!el) return;
   try {
-    // Use /health which includes ALL collections (web, products, jira, devops, etc.)
+    // Use /health which includes ALL collections
     const r = await fetch('/health');
     const data = await r.json();
     var colls = data.qdrant && data.qdrant.collections ? data.qdrant.collections : {};
@@ -426,41 +425,10 @@ function onSearchCollectionChange(collection) {
   filtersRow.style.display = anyVisible ? 'flex' : 'none';
 
   // Lazy-load filter options
-  if (collection === 'jira' && !_searchFiltersLoaded.jira) {
-    _searchFiltersLoaded.jira = true;
-    loadJiraSearchFilters();
-  }
   if ((collection === 'web' || collection === 'competitors') && !_searchFiltersLoaded.domains) {
     _searchFiltersLoaded.domains = true;
     loadDomainFilters();
   }
-  if (collection === 'confluence' && !_searchFiltersLoaded.confluence) {
-    _searchFiltersLoaded.confluence = true;
-    loadConfluenceSearchFilters();
-  }
-}
-
-async function loadJiraSearchFilters() {
-  try {
-    var r = await fetch('/jira/filters');
-    var d = await r.json();
-    var projSel = document.getElementById('rag-search-jira-project');
-    if (projSel && d.projects) {
-      d.projects.forEach(function(p) {
-        var opt = document.createElement('option');
-        opt.value = p; opt.textContent = p;
-        projSel.appendChild(opt);
-      });
-    }
-    var assignSel = document.getElementById('rag-search-jira-assignee');
-    if (assignSel && d.assignees) {
-      d.assignees.forEach(function(a) {
-        var opt = document.createElement('option');
-        opt.value = a; opt.textContent = a;
-        assignSel.appendChild(opt);
-      });
-    }
-  } catch (e) { console.warn('Failed to load Jira search filters:', e); }
 }
 
 async function loadDomainFilters() {
@@ -504,26 +472,10 @@ async function searchRag() {
     // Collection-specific filters
     var domain = document.getElementById('rag-search-domain').value;
     if (domain) body.domain = domain;
-    var repo = document.getElementById('rag-search-repo').value.trim();
-    if (repo) body.repo = repo;
     var brand = document.getElementById('rag-search-brand').value.trim();
     if (brand) body.brand = brand;
     var category = document.getElementById('rag-search-category').value.trim();
     if (category) body.category = category;
-    var jiraProject = document.getElementById('rag-search-jira-project').value;
-    if (jiraProject) body.project = jiraProject;
-    var jiraAssignee = document.getElementById('rag-search-jira-assignee').value;
-    if (jiraAssignee) body.assignee = jiraAssignee;
-    var jiraType = document.getElementById('rag-search-jira-type').value;
-    if (jiraType) body.issue_type = jiraType;
-    var confSpace = document.getElementById('rag-search-confluence-space').value;
-    if (confSpace) body.space = confSpace;
-    var confAuthor = document.getElementById('rag-search-confluence-author').value;
-    if (confAuthor) body.author = confAuthor;
-    var confDept = document.getElementById('rag-search-confluence-department').value;
-    if (confDept) body.department = confDept;
-    var confTopic = document.getElementById('rag-search-confluence-topic').value;
-    if (confTopic) body.topic = confTopic;
 
     const r = await fetch('/search', {
       method: 'POST',
@@ -545,38 +497,18 @@ function renderRagResults(results, query, collection) {
     return;
   }
   el.innerHTML = results.map((r, i) => {
-    const isCode = r.source_type === 'code';
-    const badgeClass = isCode ? 'code' : 'web';
-    const badgeText = isCode ? 'CODE' : 'WEB';
     const scoreDisplay = `${(r.score * 100).toFixed(1)}%`;
-
-    if (isCode) {
-      const symbols = (r.symbols && r.symbols.length) ? r.symbols.join(', ') : '';
-      const path = `${escapeHtml(r.repo)}/${escapeHtml(r.path)}`;
-      const lines = `L${r.start_line}-${r.end_line}`;
-      return `<div class="rag-result-card glass">
-        <div class="rag-result-header">
-          <span class="rag-result-rank">#${i + 1}</span>
-          <span class="collection-badge ${badgeClass}">${badgeText}</span>
-          <span class="rag-result-path">${path}#${lines}</span>
-          <span class="rag-result-score">${scoreDisplay}</span>
-        </div>
-        <pre class="rag-result-code">${escapeHtml(r.text.length > 600 ? r.text.slice(0, 600) + '...' : r.text)}</pre>
-        <div class="rag-result-meta">${escapeHtml(r.repo)} &middot; ${lines}${symbols ? ' &middot; ' + escapeHtml(symbols) : ''}</div>
-      </div>`;
-    } else {
-      return `<div class="rag-result-card glass">
-        <div class="rag-result-header">
-          <span class="rag-result-rank">#${i + 1}</span>
-          <span class="collection-badge ${badgeClass}">${badgeText}</span>
-          <a href="${escapeHtml(r.url || '')}" target="_blank" rel="noopener" class="rag-result-url">${escapeHtml(r.url || '')}</a>
-          <span class="rag-result-score">${scoreDisplay}</span>
-        </div>
-        ${r.title ? `<div class="rag-result-title">${escapeHtml(r.title)}</div>` : ''}
-        <div class="rag-result-text">${escapeHtml(r.text.length > 400 ? r.text.slice(0, 400) + '...' : r.text)}</div>
-        <div class="rag-result-meta">${escapeHtml(r.domain || '')} &middot; chunk #${r.chunk_idx || 0} &middot; ${r.fetch_date ? new Date(r.fetch_date).toLocaleDateString() : ''}</div>
-      </div>`;
-    }
+    return `<div class="rag-result-card glass">
+      <div class="rag-result-header">
+        <span class="rag-result-rank">#${i + 1}</span>
+        <span class="collection-badge web">WEB</span>
+        <a href="${escapeHtml(r.url || '')}" target="_blank" rel="noopener" class="rag-result-url">${escapeHtml(r.url || '')}</a>
+        <span class="rag-result-score">${scoreDisplay}</span>
+      </div>
+      ${r.title ? `<div class="rag-result-title">${escapeHtml(r.title)}</div>` : ''}
+      <div class="rag-result-text">${escapeHtml(r.text.length > 400 ? r.text.slice(0, 400) + '...' : r.text)}</div>
+      <div class="rag-result-meta">${escapeHtml(r.domain || '')} &middot; chunk #${r.chunk_idx || 0} &middot; ${r.fetch_date ? new Date(r.fetch_date).toLocaleDateString() : ''}</div>
+    </div>`;
   }).join('');
 }
 
@@ -1285,6 +1217,39 @@ function renderPriceMatches(matches, report) {
   }
 }
 
+// ── Language Dropdowns ───────────────────────────────────────
+
+var _supportedLanguages = {};
+
+async function initLanguageDropdowns() {
+  try {
+    var r = await fetch('/glossary/languages');
+    var d = await r.json();
+    _supportedLanguages = d.languages || {};
+  } catch (e) {
+    _supportedLanguages = {
+      en: 'English', es: 'Spanish', de: 'German', fr: 'French', it: 'Italian',
+      pt: 'Portuguese', ru: 'Russian', pl: 'Polish', uk: 'Ukrainian', ro: 'Romanian',
+      nl: 'Dutch', hr: 'Serbo-Croatian', tr: 'Turkish', hu: 'Hungarian', el: 'Greek',
+      cs: 'Czech', sv: 'Swedish', ca: 'Catalan', bg: 'Bulgarian', da: 'Danish',
+    };
+  }
+  var ids = ['translate-source', 'translate-target', 'glossary-source-lang', 'glossary-target-lang'];
+  var defaults = { 'translate-source': 'en', 'translate-target': 'es', 'glossary-source-lang': 'en', 'glossary-target-lang': 'es' };
+  ids.forEach(function(id) {
+    var sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = '';
+    Object.keys(_supportedLanguages).forEach(function(code) {
+      var opt = document.createElement('option');
+      opt.value = code;
+      opt.textContent = _supportedLanguages[code];
+      if (code === defaults[id]) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  });
+}
+
 // ── Translation ─────────────────────────────────────────────
 
 async function translateBatch() {
@@ -1367,13 +1332,22 @@ function renderTranslations(originals, translations) {
 
 var _glossaryData = { builtin: {}, custom: {} };
 
+function _glossaryLangs() {
+  return {
+    source: (document.getElementById('glossary-source-lang') || {}).value || 'en',
+    target: (document.getElementById('glossary-target-lang') || {}).value || 'es',
+  };
+}
+
 async function loadGlossary() {
   try {
-    var r = await fetch('/glossary');
+    var langs = _glossaryLangs();
+    var r = await fetch('/glossary?source_lang=' + langs.source + '&target_lang=' + langs.target);
     var d = await r.json();
     _glossaryData = d;
     var stats = document.getElementById('glossary-stats');
-    if (stats) stats.textContent = d.builtin_count + ' built-in + ' + d.custom_count + ' custom terms';
+    var langNames = d.languages || {};
+    if (stats) stats.textContent = d.builtin_count + ' built-in + ' + d.custom_count + ' custom (' + (langNames[langs.source] || langs.source) + ' \u2192 ' + (langNames[langs.target] || langs.target) + ')';
     filterGlossary();
   } catch (e) {
     var el = document.getElementById('glossary-list');
@@ -1390,7 +1364,6 @@ function filterGlossary() {
 
   var rows = [];
 
-  // Custom entries first (editable)
   if (showCustom) {
     Object.keys(_glossaryData.custom || {}).forEach(function(k) {
       var v = _glossaryData.custom[k];
@@ -1399,18 +1372,15 @@ function filterGlossary() {
     });
   }
 
-  // Built-in entries
   if (showBuiltin) {
     Object.keys(_glossaryData.builtin || {}).forEach(function(k) {
       var v = _glossaryData.builtin[k];
       if (search && k.indexOf(search) === -1 && v.toLowerCase().indexOf(search) === -1) return;
-      // Skip if overridden by custom
       if (_glossaryData.custom && _glossaryData.custom[k]) return;
       rows.push({ source: k, target: v, type: 'builtin' });
     });
   }
 
-  // Sort alphabetically
   rows.sort(function(a, b) { return a.source.localeCompare(b.source); });
 
   el.innerHTML = '';
@@ -1419,7 +1389,6 @@ function filterGlossary() {
     return;
   }
 
-  // Render as compact table
   var table = document.createElement('table');
   table.style.cssText = 'width:100%;border-collapse:collapse;font-size:.85rem';
   rows.forEach(function(row) {
@@ -1479,11 +1448,12 @@ async function addGlossaryEntry() {
   var src = srcEl.value.trim();
   var tgt = tgtEl.value.trim();
   if (!src || !tgt) { srcEl.focus(); return; }
+  var langs = _glossaryLangs();
   try {
     var r = await fetch('/glossary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: src, target: tgt }),
+      body: JSON.stringify({ source: src, target: tgt, source_lang: langs.source, target_lang: langs.target }),
     });
     if (!r.ok) { var e = await r.json(); alert(e.detail || 'Failed'); return; }
     srcEl.value = '';
@@ -1495,982 +1465,14 @@ async function addGlossaryEntry() {
 }
 
 async function deleteGlossaryEntry(term) {
+  var langs = _glossaryLangs();
   try {
-    var r = await fetch('/glossary/' + encodeURIComponent(term), { method: 'DELETE' });
+    var r = await fetch('/glossary/' + encodeURIComponent(term) + '?source_lang=' + langs.source + '&target_lang=' + langs.target, { method: 'DELETE' });
     if (!r.ok) { var e = await r.json(); alert(e.detail || 'Failed'); return; }
     await loadGlossary();
   } catch (e) {
     alert('Error: ' + e.message);
   }
-}
-
-// ── DevOps Docs ─────────────────────────────────────────────
-
-async function fetchDevopsSources() {
-  var el = document.getElementById('devops-sources');
-  if (!el) return;
-  try {
-    var r = await fetch('/devops/sources');
-    var d = await r.json();
-    var sources = d.sources || [];
-    if (!sources.length) {
-      el.textContent = 'No DevOps docs indexed.';
-      el.className = 'muted';
-      return;
-    }
-    el.textContent = '';
-    el.className = '';
-    var list = document.createElement('div');
-    list.className = 'rag-sources-list';
-    sources.forEach(function(s) {
-      var row = document.createElement('div');
-      row.className = 'rag-source-row glass';
-      row.innerHTML = '<div class="rag-source-info">'
-        + '<span class="rag-source-domain">' + escapeHtml(s.path || s.source_path || '') + '</span>'
-        + '<span class="rag-source-meta">' + (s.doc_count || 0) + ' docs</span></div>';
-      var btn = document.createElement('button');
-      btn.className = 'btn btn-danger-sm';
-      btn.textContent = 'Delete';
-      btn.onclick = function() { deleteDevopsSource(s.path || s.source_path || ''); };
-      row.appendChild(btn);
-      list.appendChild(row);
-    });
-    el.appendChild(list);
-  } catch (e) {
-    el.textContent = 'Sources unavailable: ' + e.message;
-    el.className = 'muted';
-  }
-}
-
-async function indexDevopsDocs() {
-  var path = document.getElementById('devops-path').value.trim();
-  if (!path) { document.getElementById('devops-path').focus(); return; }
-  var recursive = document.getElementById('devops-recursive').checked;
-  try {
-    var r = await fetch('/devops/index', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: path, recursive: recursive }),
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Failed');
-    alert('Indexed ' + (d.docs_indexed || 0) + ' documents');
-    fetchDevopsSources();
-    fetchRagCollections();
-  } catch (e) {
-    alert('Error: ' + e.message);
-  }
-}
-
-async function deleteDevopsSource(sourcePath) {
-  if (!confirm('Delete DevOps docs from ' + sourcePath + '?')) return;
-  try {
-    var r = await fetch('/devops/source/' + encodeURIComponent(sourcePath), { method: 'DELETE' });
-    if (!r.ok) throw new Error('Delete failed');
-    fetchDevopsSources();
-    fetchRagCollections();
-  } catch (e) {
-    alert('Failed: ' + e.message);
-  }
-}
-
-async function searchDevops() {
-  var query = document.getElementById('devops-search-query').value.trim();
-  if (!query) { document.getElementById('devops-search-query').focus(); return; }
-  var el = document.getElementById('devops-results');
-  el.textContent = 'Searching...';
-  el.className = 'muted';
-  try {
-    var r = await fetch('/devops/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: query, top_k: 10 }),
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Failed');
-    var results = d.results || [];
-    el.textContent = '';
-    el.className = '';
-    if (!results.length) { el.textContent = 'No results found.'; el.className = 'muted'; return; }
-    results.forEach(function(res, i) {
-      var card = document.createElement('div');
-      card.className = 'rag-result-card glass';
-      card.innerHTML = '<div class="rag-result-header">'
-        + '<span class="rag-result-rank">#' + (i + 1) + '</span>'
-        + '<span class="collection-badge devops">DEVOPS</span>'
-        + '<span class="rag-result-path" style="flex:1">' + escapeHtml(res.path || res.source || '') + '</span>'
-        + '<span class="rag-result-score">' + (res.score * 100).toFixed(1) + '%</span></div>'
-        + '<div class="rag-result-text">' + escapeHtml((res.text || '').slice(0, 400)) + '</div>';
-      el.appendChild(card);
-    });
-  } catch (e) {
-    el.textContent = 'Search failed: ' + e.message;
-  }
-}
-
-async function analyzeLogs() {
-  var logText = document.getElementById('devops-log-input').value.trim();
-  if (!logText) { document.getElementById('devops-log-input').focus(); return; }
-  var service = document.getElementById('devops-log-service').value.trim();
-  var el = document.getElementById('devops-log-results');
-  el.textContent = 'Analyzing logs...';
-  el.className = 'muted';
-  try {
-    var body = { log_text: logText };
-    if (service) body.service = service;
-    var r = await fetch('/devops/analyze-logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Failed');
-    if (d.job_id && d.status !== 'completed') _pollLogAnalysis(d.job_id);
-    else renderLogAnalysis(d);
-  } catch (e) {
-    el.textContent = 'Error: ' + e.message;
-  }
-}
-
-function _pollLogAnalysis(jobId) {
-  var el = document.getElementById('devops-log-results');
-  var iv = setInterval(async function() {
-    try {
-      var r = await fetch('/devops/analyze-logs/' + jobId);
-      var d = await r.json();
-      if (d.status === 'completed' || d.status === 'failed') { clearInterval(iv); renderLogAnalysis(d); }
-      else { el.textContent = 'Analyzing... (' + d.status + ')'; }
-    } catch (_e) { /* ignore */ }
-  }, 2000);
-}
-
-function renderLogAnalysis(data) {
-  var el = document.getElementById('devops-log-results');
-  el.textContent = '';
-  el.className = '';
-  var results = data.results || [];
-  if (!results.length) {
-    el.textContent = 'No issues found. Categories: ' + ((data.categories || []).join(', ') || 'none');
-    el.className = 'muted';
-    return;
-  }
-  results.forEach(function(res) {
-    var card = document.createElement('div');
-    card.className = 'rag-result-card glass';
-    var sev = res.severity === 'error' ? 'failed' : 'warning';
-    var h = '<div class="rag-result-header">'
-      + '<span class="collection-badge ' + sev + '">' + escapeHtml(res.category || res.severity || 'info') + '</span>'
-      + '<span style="flex:1">' + escapeHtml(res.summary || res.message || '') + '</span></div>';
-    if (res.details) h += '<div class="rag-result-text">' + escapeHtml(res.details) + '</div>';
-    if (res.recommendation) h += '<div class="rag-result-meta" style="color:var(--accent-2)">Fix: ' + escapeHtml(res.recommendation) + '</div>';
-    card.innerHTML = h;
-    el.appendChild(card);
-  });
-}
-
-// ── Code Indexing ───────────────────────────────────────────
-
-async function indexCodeRepo() {
-  var repoPath = document.getElementById('code-repo-path').value.trim();
-  if (!repoPath) { document.getElementById('code-repo-path').focus(); return; }
-  var repoName = document.getElementById('code-repo-name').value.trim();
-  var statusEl = document.getElementById('code-index-status');
-  var infoEl = document.getElementById('code-index-info');
-  statusEl.style.display = 'block';
-  infoEl.textContent = 'Indexing repository...';
-  try {
-    var body = { repo_path: repoPath };
-    if (repoName) body.repo_name = repoName;
-    var r = await fetch('/index', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Failed');
-    infoEl.textContent = 'Indexed ' + (d.chunks_indexed || 0) + ' chunks from ' + repoPath;
-    fetchRagCollections();
-  } catch (e) {
-    infoEl.textContent = 'Error: ' + e.message;
-  }
-}
-
-async function searchCode() {
-  var query = document.getElementById('code-search-query').value.trim();
-  if (!query) { document.getElementById('code-search-query').focus(); return; }
-  var repo = document.getElementById('code-search-repo').value.trim();
-  var topK = parseInt(document.getElementById('code-search-topk').value) || 10;
-  var el = document.getElementById('code-results');
-  el.textContent = 'Searching code...';
-  el.className = 'muted';
-  try {
-    var body = { query: query, top_k: topK, rerank: true };
-    if (repo) body.repo = repo;
-    var r = await fetch('/retrieve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Failed');
-    var results = d.results || [];
-    el.textContent = '';
-    el.className = '';
-    if (!results.length) { el.textContent = 'No code results found.'; el.className = 'muted'; return; }
-    results.forEach(function(res, i) {
-      var path = escapeHtml(res.repo || '') + '/' + escapeHtml(res.path || '');
-      var lines = 'L' + res.start_line + '-' + res.end_line;
-      var symbols = (res.symbols && res.symbols.length) ? res.symbols.join(', ') : '';
-      var card = document.createElement('div');
-      card.className = 'rag-result-card glass';
-      card.innerHTML = '<div class="rag-result-header">'
-        + '<span class="rag-result-rank">#' + (i + 1) + '</span>'
-        + '<span class="collection-badge code">CODE</span>'
-        + '<span class="rag-result-path">' + path + '#' + lines + '</span>'
-        + '<span class="rag-result-score">' + (res.score * 100).toFixed(1) + '%</span></div>'
-        + '<pre class="rag-result-code">' + escapeHtml(res.text.length > 600 ? res.text.slice(0, 600) + '...' : res.text) + '</pre>'
-        + '<div class="rag-result-meta">' + escapeHtml(res.repo || '') + ' &middot; ' + lines + (symbols ? ' &middot; ' + escapeHtml(symbols) : '') + '</div>';
-      el.appendChild(card);
-    });
-  } catch (e) {
-    el.textContent = 'Search failed: ' + e.message;
-  }
-}
-
-// ── Jira Tickets ────────────────────────────────────────────
-
-let _jiraImportInterval = null;
-let _jiraStatusInterval = null;
-let _jiraBaseUrl = null;
-
-async function fetchJiraStatus() {
-  var badge = document.getElementById('jira-connection-badge');
-  var statsRow = document.getElementById('jira-stats-row');
-  if (!badge) return;
-  try {
-    var r = await fetch('/jira/status');
-    var d = await r.json();
-    var configured = d.configured;
-
-    // Store base URL for ticket links
-    if (d.base_url) _jiraBaseUrl = d.base_url;
-
-    // Connection badge
-    badge.innerHTML = '';
-    var dot = document.createElement('span');
-    dot.className = 'agent-status-dot ' + (configured ? 'online' : 'offline');
-    badge.appendChild(dot);
-    var label = document.createElement('span');
-    if (configured) {
-      label.textContent = d.base_url || 'Connected';
-      label.className = '';
-    } else {
-      label.textContent = 'Not configured';
-      label.className = 'muted';
-    }
-    badge.appendChild(label);
-
-    // Stats row
-    if (configured) {
-      statsRow.style.display = 'flex';
-      var projectCount = (d.sources || []).length;
-      document.getElementById('jira-stat-tickets').textContent = (d.total_tickets || 0).toLocaleString();
-      document.getElementById('jira-stat-chunks').textContent = (d.total_chunks || 0).toLocaleString();
-      document.getElementById('jira-stat-projects').textContent = projectCount;
-      var countBadge = document.getElementById('jira-sources-count');
-      if (countBadge) countBadge.textContent = '(' + projectCount + ')';
-
-      var lastEl = document.getElementById('jira-stat-last-indexed');
-      if (d.last_indexed) {
-        var dt = new Date(d.last_indexed);
-        var now = new Date();
-        var diffMs = now - dt;
-        var diffMin = Math.floor(diffMs / 60000);
-        if (diffMin < 1) lastEl.textContent = 'Just now';
-        else if (diffMin < 60) lastEl.textContent = diffMin + 'm ago';
-        else if (diffMin < 1440) lastEl.textContent = Math.floor(diffMin / 60) + 'h ago';
-        else lastEl.textContent = dt.toLocaleDateString();
-        lastEl.title = dt.toLocaleString();
-      } else {
-        lastEl.textContent = 'Never';
-        lastEl.title = '';
-      }
-
-      var nightlyEl = document.getElementById('jira-stat-nightly');
-      if (d.nightly_sync_enabled) {
-        nightlyEl.textContent = d.nightly_sync_hour + ':00 UTC';
-        nightlyEl.title = 'Nightly sync enabled';
-      } else {
-        nightlyEl.textContent = 'Off';
-        nightlyEl.title = 'Set JIRA_SYNC_ENABLED=true to enable';
-      }
-
-      // Show active jobs if any running
-      var activeJobs = (d.jobs || []).filter(function(j) { return j.status === 'running'; });
-      var jobsEl = document.getElementById('jira-active-jobs');
-      if (activeJobs.length) {
-        jobsEl.style.display = 'block';
-        jobsEl.innerHTML = '';
-        activeJobs.forEach(function(j) {
-          var row = document.createElement('div');
-          row.className = 'jira-active-job glass';
-          var st = document.createElement('span');
-          st.className = 'rag-status-badge running';
-          st.textContent = 'Running';
-          row.appendChild(st);
-          var info = document.createElement('span');
-          info.className = 'muted';
-          info.textContent = (j.tickets_indexed || 0) + '/' + (j.tickets_found || '?') + ' tickets, ' + (j.chunks_indexed || 0) + ' chunks';
-          row.appendChild(info);
-          jobsEl.appendChild(row);
-        });
-      } else {
-        jobsEl.style.display = 'none';
-      }
-      // Populate filter dropdowns
-      fetchJiraFilters();
-    } else {
-      statsRow.style.display = 'none';
-    }
-  } catch (e) {
-    badge.innerHTML = '';
-    var dotErr = document.createElement('span');
-    dotErr.className = 'agent-status-dot offline';
-    badge.appendChild(dotErr);
-    var msg = document.createElement('span');
-    msg.className = 'muted';
-    msg.textContent = 'Status unavailable';
-    badge.appendChild(msg);
-  }
-}
-
-var _jiraFiltersLoaded = false;
-async function fetchJiraFilters() {
-  if (_jiraFiltersLoaded) return;
-  try {
-    var r = await fetch('/jira/filters');
-    var d = await r.json();
-    _jiraFiltersLoaded = true;
-
-    var projSel = document.getElementById('jira-search-project');
-    if (projSel && d.projects) {
-      d.projects.forEach(function(p) {
-        var opt = document.createElement('option');
-        opt.value = p;
-        opt.textContent = p;
-        projSel.appendChild(opt);
-      });
-    }
-
-    var assignSel = document.getElementById('jira-search-assignee');
-    if (assignSel && d.assignees) {
-      d.assignees.forEach(function(a) {
-        var opt = document.createElement('option');
-        opt.value = a;
-        opt.textContent = a;
-        assignSel.appendChild(opt);
-      });
-    }
-  } catch (e) {
-    console.warn('Failed to load Jira filters:', e);
-  }
-}
-
-async function fetchJiraSources() {
-  var el = document.getElementById('jira-sources');
-  if (!el) return;
-  try {
-    var r = await fetch('/jira/sources');
-    var d = await r.json();
-    var sources = d.sources || [];
-    if (!sources.length) {
-      el.textContent = 'No Jira projects indexed yet.';
-      el.className = 'muted';
-      return;
-    }
-    el.textContent = '';
-    el.className = '';
-    var list = document.createElement('div');
-    list.className = 'rag-sources-list';
-    sources.forEach(function(s) {
-      var row = document.createElement('div');
-      row.className = 'rag-source-row glass';
-      var info = document.createElement('div');
-      info.className = 'rag-source-info';
-      var domain = document.createElement('span');
-      domain.className = 'rag-source-domain';
-      domain.textContent = s.project;
-      var meta = document.createElement('span');
-      meta.className = 'rag-source-meta';
-      var metaText = (s.ticket_count || 0) + ' tickets \u00b7 ' + (s.chunk_count || 0) + ' chunks';
-      if (s.last_indexed) metaText += ' \u00b7 Last indexed: ' + new Date(s.last_indexed).toLocaleString();
-      meta.textContent = metaText;
-      info.appendChild(domain);
-      info.appendChild(meta);
-      row.appendChild(info);
-      var btn = document.createElement('button');
-      btn.className = 'btn btn-danger-sm';
-      btn.textContent = 'Delete';
-      btn.onclick = function() { deleteJiraProject(s.project); };
-      row.appendChild(btn);
-      list.appendChild(row);
-    });
-    el.appendChild(list);
-  } catch (e) {
-    el.textContent = 'Sources unavailable: ' + e.message;
-    el.className = 'muted';
-  }
-}
-
-async function startJiraImport() {
-  var project = document.getElementById('jira-import-project').value.trim();
-  var btn = document.getElementById('jira-import-btn');
-  var syncBtn = document.getElementById('jira-sync-btn');
-  var progressEl = document.getElementById('jira-import-progress');
-  var barEl = document.getElementById('jira-progress-bar');
-  var infoEl = document.getElementById('jira-import-info');
-
-  btn.disabled = true;
-  btn.textContent = 'Importing...';
-  if (syncBtn) syncBtn.disabled = true;
-  progressEl.style.display = 'block';
-  barEl.style.width = '5%';
-  infoEl.textContent = 'Starting full import...';
-
-  try {
-    var body = {};
-    if (project) body.project = project;
-    var r = await fetch('/jira/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Import failed');
-    _pollJiraImport(d.job_id);
-  } catch (e) {
-    infoEl.textContent = 'Error: ' + e.message;
-    btn.disabled = false;
-    btn.textContent = 'Full Import';
-    if (syncBtn) syncBtn.disabled = false;
-  }
-}
-
-async function startJiraSync() {
-  var btn = document.getElementById('jira-import-btn');
-  var syncBtn = document.getElementById('jira-sync-btn');
-  var progressEl = document.getElementById('jira-import-progress');
-  var barEl = document.getElementById('jira-progress-bar');
-  var infoEl = document.getElementById('jira-import-info');
-
-  if (btn) btn.disabled = true;
-  if (syncBtn) { syncBtn.disabled = true; syncBtn.textContent = 'Syncing...'; }
-  progressEl.style.display = 'block';
-  barEl.style.width = '5%';
-  infoEl.textContent = 'Starting sync (last 24h)...';
-
-  try {
-    var r = await fetch('/jira/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ since_hours: 24 }),
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Sync failed');
-    _pollJiraImport(d.job_id);
-  } catch (e) {
-    infoEl.textContent = 'Error: ' + e.message;
-    if (btn) btn.disabled = false;
-    if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = 'Sync Recent (24h)'; }
-  }
-}
-
-function _pollJiraImport(jobId) {
-  if (_jiraImportInterval) clearInterval(_jiraImportInterval);
-  var btn = document.getElementById('jira-import-btn');
-  var syncBtn = document.getElementById('jira-sync-btn');
-  _jiraImportInterval = setInterval(async function() {
-    try {
-      var r = await fetch('/jira/import/status/' + jobId);
-      if (r.status === 404) {
-        // Job not registered yet (background task still starting), wait
-        return;
-      }
-      var d = await r.json();
-      var barEl = document.getElementById('jira-progress-bar');
-      var infoEl = document.getElementById('jira-import-info');
-
-      var tickets = d.tickets_imported || d.tickets_indexed || 0;
-      var found = d.tickets_found || 0;
-      var chunks = d.chunks_indexed || 0;
-      var pct = found > 0 ? Math.round((tickets / found) * 100) : (d.status === 'running' ? 30 : 100);
-      barEl.style.width = Math.min(pct, 100) + '%';
-      var statusLabel = d.status === 'running' ? 'Importing' : d.status;
-      infoEl.textContent = statusLabel + ' \u2014 ' + tickets + '/' + found + ' tickets, ' + chunks + ' chunks';
-      if (d.errors && d.errors.length) {
-        infoEl.textContent += ' (' + d.errors.length + ' errors)';
-      }
-
-      // Also refresh the stats
-      fetchJiraStatus();
-
-      if (d.status === 'completed' || d.status === 'failed') {
-        clearInterval(_jiraImportInterval);
-        _jiraImportInterval = null;
-        btn.disabled = false;
-        btn.textContent = 'Full Import';
-        if (syncBtn) { syncBtn.disabled = false; }
-        if (d.status === 'completed') {
-          barEl.style.width = '100%';
-          infoEl.textContent = 'Complete: ' + tickets + ' tickets, ' + chunks + ' chunks indexed';
-          if (d.ended_at) {
-            infoEl.textContent += ' \u2014 ' + new Date(d.ended_at).toLocaleTimeString();
-          }
-        } else {
-          var lastErr = d.errors && d.errors.length ? d.errors[d.errors.length - 1] : 'Unknown error';
-          infoEl.textContent = 'Failed: ' + lastErr;
-        }
-        fetchJiraSources();
-        fetchRagCollections();
-      }
-    } catch (_e) { /* ignore */ }
-  }, 3000);
-}
-
-async function deleteJiraProject(project) {
-  if (!confirm('Delete all indexed tickets from project ' + project + '?')) return;
-  try {
-    var r = await fetch('/jira/source/' + encodeURIComponent(project), { method: 'DELETE' });
-    if (!r.ok) throw new Error('Delete failed');
-    fetchJiraSources();
-    fetchJiraStatus();
-    fetchRagCollections();
-  } catch (e) {
-    alert('Failed to delete: ' + e.message);
-  }
-}
-
-async function searchJira() {
-  var queryEl = document.getElementById('jira-search-query');
-  var query = queryEl.value.trim();
-  if (!query) { queryEl.focus(); return; }
-  var project = document.getElementById('jira-search-project').value.trim();
-  var assignee = document.getElementById('jira-search-assignee').value.trim();
-  var issueType = document.getElementById('jira-search-type').value;
-  var el = document.getElementById('jira-results');
-
-  el.textContent = 'Searching...';
-  el.className = 'muted';
-
-  try {
-    var params = new URLSearchParams({ query: query, top_k: '10' });
-    if (project) params.set('project', project);
-    if (assignee) params.set('assignee', assignee);
-    if (issueType) params.set('issue_type', issueType);
-
-    var r = await fetch('/jira/search?' + params.toString());
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Search failed');
-    renderJiraResults(d.results || []);
-  } catch (e) {
-    el.textContent = 'Search failed: ' + e.message;
-    el.className = 'muted';
-  }
-}
-
-function renderJiraResults(results) {
-  var el = document.getElementById('jira-results');
-  el.textContent = '';
-  el.className = '';
-  if (!results.length) {
-    el.textContent = 'No results found.';
-    el.className = 'muted';
-    return;
-  }
-  results.forEach(function(r, i) {
-    var score = (r.score * 100).toFixed(1) + '%';
-    var statusClass = r.status === 'Done' ? 'active'
-      : r.status === 'In Progress' ? 'running'
-      : r.status === 'To Do' ? 'inactive' : 'inactive';
-    var meta = [];
-    if (r.status) meta.push(r.status);
-    if (r.assignee) meta.push(r.assignee);
-    if (r.issue_type) meta.push(r.issue_type);
-    if (r.project) meta.push(r.project);
-
-    var card = document.createElement('div');
-    card.className = 'rag-result-card glass';
-
-    var header = document.createElement('div');
-    header.className = 'rag-result-header';
-
-    var rank = document.createElement('span');
-    rank.className = 'rag-result-rank';
-    rank.textContent = '#' + (i + 1);
-
-    var badge = document.createElement('span');
-    badge.className = 'collection-badge jira';
-    badge.textContent = 'JIRA';
-
-    var key;
-    if (_jiraBaseUrl && r.ticket_key) {
-      key = document.createElement('a');
-      key.href = _jiraBaseUrl + '/browse/' + r.ticket_key;
-      key.target = '_blank';
-      key.rel = 'noopener';
-    } else {
-      key = document.createElement('span');
-    }
-    key.className = 'jira-ticket-key';
-    key.textContent = r.ticket_key || '';
-
-    var title = document.createElement('span');
-    title.className = 'rag-result-title';
-    title.style.flex = '1';
-    title.textContent = r.summary || '';
-
-    var statusBadge = document.createElement('span');
-    statusBadge.className = 'rag-status-badge ' + statusClass;
-    statusBadge.textContent = r.status || '';
-
-    var scoreEl = document.createElement('span');
-    scoreEl.className = 'rag-result-score';
-    scoreEl.textContent = score;
-
-    header.appendChild(rank);
-    header.appendChild(badge);
-    header.appendChild(key);
-    header.appendChild(title);
-    header.appendChild(statusBadge);
-    header.appendChild(scoreEl);
-    card.appendChild(header);
-
-    if (r.text) {
-      var text = document.createElement('div');
-      text.className = 'rag-result-text';
-      text.textContent = r.text.length > 400 ? r.text.slice(0, 400) + '...' : r.text;
-      card.appendChild(text);
-    }
-
-    if (meta.length) {
-      var metaEl = document.createElement('div');
-      metaEl.className = 'rag-result-meta';
-      metaEl.textContent = meta.join(' \u00b7 ');
-      card.appendChild(metaEl);
-    }
-
-    el.appendChild(card);
-  });
-}
-
-// ── Confluence Pages ─────────────────────────────────────────
-
-let _confluenceImportInterval = null;
-let _confluenceBaseUrl = null;
-
-async function fetchConfluenceStatus() {
-  var badge = document.getElementById('confluence-connection-badge');
-  var statsRow = document.getElementById('confluence-stats-row');
-  if (!badge) return;
-  try {
-    var r = await fetch('/confluence/status');
-    var d = await r.json();
-    var configured = d.configured;
-
-    if (d.base_url) _confluenceBaseUrl = d.base_url;
-
-    badge.innerHTML = '';
-    var dot = document.createElement('span');
-    dot.className = 'agent-status-dot ' + (configured ? 'online' : 'offline');
-    badge.appendChild(dot);
-    var label = document.createElement('span');
-    if (configured) {
-      label.textContent = d.base_url || 'Connected';
-      label.className = '';
-    } else {
-      label.textContent = 'Not configured';
-      label.className = 'muted';
-    }
-    badge.appendChild(label);
-
-    if (configured) {
-      statsRow.style.display = 'flex';
-      var spaceCount = (d.sources || []).length;
-      document.getElementById('confluence-stat-pages').textContent = (d.total_pages || 0).toLocaleString();
-      document.getElementById('confluence-stat-chunks').textContent = (d.total_chunks || 0).toLocaleString();
-      document.getElementById('confluence-stat-spaces').textContent = spaceCount;
-      var countBadge = document.getElementById('confluence-sources-count');
-      if (countBadge) countBadge.textContent = '(' + spaceCount + ')';
-
-      var lastEl = document.getElementById('confluence-stat-last-indexed');
-      if (d.last_indexed) {
-        var dt = new Date(d.last_indexed);
-        var now = new Date();
-        var diffMs = now - dt;
-        var diffMin = Math.floor(diffMs / 60000);
-        if (diffMin < 1) lastEl.textContent = 'Just now';
-        else if (diffMin < 60) lastEl.textContent = diffMin + 'm ago';
-        else if (diffMin < 1440) lastEl.textContent = Math.floor(diffMin / 60) + 'h ago';
-        else lastEl.textContent = dt.toLocaleDateString();
-        lastEl.title = dt.toLocaleString();
-      } else {
-        lastEl.textContent = 'Never';
-        lastEl.title = '';
-      }
-
-      var nightlyEl = document.getElementById('confluence-stat-nightly');
-      if (d.nightly_sync_enabled) {
-        nightlyEl.textContent = d.nightly_sync_hour + ':00 UTC';
-        nightlyEl.title = 'Nightly sync enabled';
-      } else {
-        nightlyEl.textContent = 'Off';
-        nightlyEl.title = 'Set CONFLUENCE_SYNC_ENABLED=true to enable';
-      }
-
-      // Show active jobs if any running
-      var activeJobs = (d.jobs || []).filter(function(j) { return j.status === 'running'; });
-      var jobsEl = document.getElementById('confluence-active-jobs');
-      if (activeJobs.length) {
-        jobsEl.style.display = 'block';
-        jobsEl.innerHTML = '';
-        activeJobs.forEach(function(j) {
-          var row = document.createElement('div');
-          row.className = 'jira-active-job glass';
-          var st = document.createElement('span');
-          st.className = 'rag-status-badge running';
-          st.textContent = 'Running';
-          row.appendChild(st);
-          var info = document.createElement('span');
-          info.className = 'muted';
-          info.textContent = (j.pages_indexed || 0) + '/' + (j.pages_found || '?') + ' pages, ' + (j.chunks_indexed || 0) + ' chunks';
-          row.appendChild(info);
-          jobsEl.appendChild(row);
-        });
-      } else {
-        jobsEl.style.display = 'none';
-      }
-    } else {
-      statsRow.style.display = 'none';
-    }
-  } catch (e) {
-    badge.innerHTML = '';
-    var dotErr = document.createElement('span');
-    dotErr.className = 'agent-status-dot offline';
-    badge.appendChild(dotErr);
-    var msg = document.createElement('span');
-    msg.className = 'muted';
-    msg.textContent = 'Status unavailable';
-    badge.appendChild(msg);
-  }
-}
-
-async function fetchConfluenceSources() {
-  var el = document.getElementById('confluence-sources');
-  if (!el) return;
-  try {
-    var r = await fetch('/confluence/sources');
-    var d = await r.json();
-    var sources = d.sources || [];
-    if (!sources.length) {
-      el.textContent = 'No Confluence spaces indexed yet.';
-      el.className = 'muted';
-      return;
-    }
-    el.textContent = '';
-    el.className = '';
-    var list = document.createElement('div');
-    list.className = 'rag-sources-list';
-    sources.forEach(function(s) {
-      var row = document.createElement('div');
-      row.className = 'rag-source-row glass';
-      var info = document.createElement('div');
-      info.className = 'rag-source-info';
-      var domain = document.createElement('span');
-      domain.className = 'rag-source-domain';
-      domain.textContent = s.space;
-      var meta = document.createElement('span');
-      meta.className = 'rag-source-meta';
-      var metaText = (s.page_count || 0) + ' pages \u00b7 ' + (s.chunk_count || 0) + ' chunks';
-      if (s.last_indexed) metaText += ' \u00b7 Last indexed: ' + new Date(s.last_indexed).toLocaleString();
-      meta.textContent = metaText;
-      info.appendChild(domain);
-      info.appendChild(meta);
-      row.appendChild(info);
-      var btn = document.createElement('button');
-      btn.className = 'btn btn-danger-sm';
-      btn.textContent = 'Delete';
-      btn.onclick = function() { deleteConfluenceSpace(s.space); };
-      row.appendChild(btn);
-      list.appendChild(row);
-    });
-    el.appendChild(list);
-  } catch (e) {
-    el.textContent = 'Sources unavailable: ' + e.message;
-    el.className = 'muted';
-  }
-}
-
-async function startConfluenceImport() {
-  var space = document.getElementById('confluence-import-space').value.trim();
-  var btn = document.getElementById('confluence-import-btn');
-  var syncBtn = document.getElementById('confluence-sync-btn');
-  var progressEl = document.getElementById('confluence-import-progress');
-  var barEl = document.getElementById('confluence-progress-bar');
-  var infoEl = document.getElementById('confluence-import-info');
-
-  btn.disabled = true;
-  btn.textContent = 'Importing...';
-  if (syncBtn) syncBtn.disabled = true;
-  progressEl.style.display = 'block';
-  barEl.style.width = '5%';
-  infoEl.textContent = 'Starting full import...';
-
-  try {
-    var body = {};
-    if (space) body.space = space;
-    var r = await fetch('/confluence/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Import failed');
-    _pollConfluenceImport(d.job_id);
-  } catch (e) {
-    infoEl.textContent = 'Error: ' + e.message;
-    btn.disabled = false;
-    btn.textContent = 'Full Import';
-    if (syncBtn) syncBtn.disabled = false;
-  }
-}
-
-async function startConfluenceSync() {
-  var btn = document.getElementById('confluence-import-btn');
-  var syncBtn = document.getElementById('confluence-sync-btn');
-  var progressEl = document.getElementById('confluence-import-progress');
-  var barEl = document.getElementById('confluence-progress-bar');
-  var infoEl = document.getElementById('confluence-import-info');
-
-  if (btn) btn.disabled = true;
-  if (syncBtn) { syncBtn.disabled = true; syncBtn.textContent = 'Syncing...'; }
-  progressEl.style.display = 'block';
-  barEl.style.width = '5%';
-  infoEl.textContent = 'Starting sync (last 24h)...';
-
-  try {
-    var r = await fetch('/confluence/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ since_hours: 24 }),
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Sync failed');
-    _pollConfluenceImport(d.job_id);
-  } catch (e) {
-    infoEl.textContent = 'Error: ' + e.message;
-    if (btn) btn.disabled = false;
-    if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = 'Sync Recent (24h)'; }
-  }
-}
-
-function _pollConfluenceImport(jobId) {
-  if (_confluenceImportInterval) clearInterval(_confluenceImportInterval);
-  var btn = document.getElementById('confluence-import-btn');
-  var syncBtn = document.getElementById('confluence-sync-btn');
-  _confluenceImportInterval = setInterval(async function() {
-    try {
-      var r = await fetch('/confluence/import/status/' + jobId);
-      if (r.status === 404) return;
-      var d = await r.json();
-      var barEl = document.getElementById('confluence-progress-bar');
-      var infoEl = document.getElementById('confluence-import-info');
-
-      var pages = d.pages_imported || d.pages_indexed || 0;
-      var found = d.pages_found || 0;
-      var chunks = d.chunks_indexed || 0;
-      var pct = found > 0 ? Math.round((pages / found) * 100) : (d.status === 'running' ? 30 : 100);
-      barEl.style.width = Math.min(pct, 100) + '%';
-      var statusLabel = d.status === 'running' ? 'Importing' : d.status;
-      infoEl.textContent = statusLabel + ' \u2014 ' + pages + '/' + found + ' pages, ' + chunks + ' chunks';
-      if (d.errors && d.errors.length) {
-        infoEl.textContent += ' (' + d.errors.length + ' errors)';
-      }
-
-      fetchConfluenceStatus();
-
-      if (d.status === 'completed' || d.status === 'failed') {
-        clearInterval(_confluenceImportInterval);
-        _confluenceImportInterval = null;
-        btn.disabled = false;
-        btn.textContent = 'Full Import';
-        if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = 'Sync Recent (24h)'; }
-        if (d.status === 'completed') {
-          barEl.style.width = '100%';
-          infoEl.textContent = 'Complete: ' + pages + ' pages, ' + chunks + ' chunks indexed';
-          if (d.ended_at) {
-            infoEl.textContent += ' \u2014 ' + new Date(d.ended_at).toLocaleTimeString();
-          }
-        } else {
-          var lastErr = d.errors && d.errors.length ? d.errors[d.errors.length - 1] : 'Unknown error';
-          infoEl.textContent = 'Failed: ' + lastErr;
-        }
-        fetchConfluenceSources();
-        fetchRagCollections();
-      }
-    } catch (_e) { /* ignore */ }
-  }, 3000);
-}
-
-async function deleteConfluenceSpace(space) {
-  if (!confirm('Delete all indexed pages from space ' + space + '?')) return;
-  try {
-    var r = await fetch('/confluence/source/' + encodeURIComponent(space), { method: 'DELETE' });
-    if (!r.ok) throw new Error('Delete failed');
-    fetchConfluenceSources();
-    fetchConfluenceStatus();
-    fetchRagCollections();
-  } catch (e) {
-    alert('Failed to delete: ' + e.message);
-  }
-}
-
-async function loadConfluenceSearchFilters() {
-  try {
-    var r = await fetch('/confluence/filters');
-    var d = await r.json();
-    var spaceSel = document.getElementById('rag-search-confluence-space');
-    if (spaceSel && d.spaces) {
-      d.spaces.forEach(function(s) {
-        var opt = document.createElement('option');
-        opt.value = s; opt.textContent = s;
-        spaceSel.appendChild(opt);
-      });
-    }
-    var authorSel = document.getElementById('rag-search-confluence-author');
-    if (authorSel && d.authors) {
-      d.authors.forEach(function(a) {
-        var opt = document.createElement('option');
-        opt.value = a; opt.textContent = a;
-        authorSel.appendChild(opt);
-      });
-    }
-    var deptSel = document.getElementById('rag-search-confluence-department');
-    if (deptSel && d.departments) {
-      d.departments.forEach(function(dep) {
-        var opt = document.createElement('option');
-        opt.value = dep; opt.textContent = dep;
-        deptSel.appendChild(opt);
-      });
-    }
-    var topicSel = document.getElementById('rag-search-confluence-topic');
-    if (topicSel && d.topics) {
-      d.topics.forEach(function(t) {
-        var opt = document.createElement('option');
-        opt.value = t; opt.textContent = t;
-        topicSel.appendChild(opt);
-      });
-    }
-  } catch (e) { console.warn('Failed to load Confluence search filters:', e); }
 }
 
 // ── Chat with RAG ───────────────────────────────────────────
@@ -2515,7 +1517,6 @@ async function sendChat() {
       body: JSON.stringify({
         query: query,
         use_rag: document.getElementById('chat-use-rag').checked,
-        use_tools: document.getElementById('chat-use-tools').checked,
       }),
     });
     var d = await r.json();
@@ -2526,12 +1527,6 @@ async function sendChat() {
       aiText = pending.querySelector('.chat-text');
       aiText.className = 'chat-text';
       aiText.textContent = d.response || '';
-      if (d.tools_used && d.tools_used.length) {
-        var toolsDiv = document.createElement('div');
-        toolsDiv.className = 'chat-tools';
-        toolsDiv.textContent = 'Tools: ' + d.tools_used.join(', ');
-        pending.appendChild(toolsDiv);
-      }
     }
   } catch (e) {
     var pend = document.getElementById('chat-pending');

@@ -150,6 +150,23 @@ class ExtractionConfig:
 class WebIndexer:
     COLLECTION_NAME = "web_pages"
     BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+    MIN_CONTENT_LENGTH = 200
+
+    # URL path patterns to exclude from crawling
+    _URL_BLACKLIST_PATTERNS = [
+        "/go/product/", "/go/category/",   # Lightspeed redirect URLs
+        "/tags/", "/brands/",               # Thin listing pages
+        "/admin", "/login", "/cart", "/checkout", "/account",
+        "/privacy", "/terms", "/sitemap", "/wishlist", "/compare",
+        "?page=", "?sort=", "?limit=",     # Pagination/sort variants
+    ]
+
+    @classmethod
+    def _is_blacklisted_url(cls, url: str) -> bool:
+        """Check if URL path matches any blacklist pattern."""
+        parsed = urlparse(url)
+        path_query = parsed.path + ("?" + parsed.query if parsed.query else "")
+        return any(p in path_query for p in cls._URL_BLACKLIST_PATTERNS)
 
     def __init__(
         self,
@@ -228,23 +245,90 @@ class WebIndexer:
 
     # ── Site probe (Cloudflare detection) ─────────────────────────
 
+    # Suspicious redirect targets that indicate bot blocking
+    _BOT_BLOCK_REDIRECT_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
+
     async def _probe_site(self, url: str, job: 'CrawlJob') -> bool:
         """Probe site with httpx to detect Cloudflare/bot protection.
 
         Returns True if curl_cffi should be used instead of httpx.
+
+        Detection strategies:
+        1. Bot UA → 403/503 with Cloudflare indicators
+        2. Bot UA → 302 redirect to localhost/bogus (common bot trap)
+        3. Bot UA → 200 but Cloudflare JS challenge page
+        4. Bot UA → tiny/empty body vs browser UA → real content
         """
         if not HAS_CURL_CFFI:
             job.log("PROBE: curl_cffi not installed — skipping Cloudflare detection")
             return False
 
-        job.log(f"PROBE: Testing site accessibility with httpx...")
+        job.log(f"PROBE: Testing site accessibility...")
         try:
-            headers = {
-                "User-Agent": "DGXSparkRAGBot/1.0 (web indexer for local RAG)",
+            # Phase 1: Test with bot UA, NO redirect following
+            bot_headers = {
+                "User-Agent": self._BOT_UA,
                 "Accept": "text/html,application/xhtml+xml",
             }
             async with httpx.AsyncClient(
-                follow_redirects=True, timeout=10.0, headers=headers, verify=False,
+                follow_redirects=False, timeout=10.0, headers=bot_headers, verify=False,
+            ) as client:
+                resp = await client.get(url)
+
+                # Check for redirect-based bot blocking (302 → localhost/127.0.0.1)
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location", "")
+                    try:
+                        redir_host = urlparse(location).hostname or ""
+                    except Exception:
+                        redir_host = ""
+
+                    if redir_host in self._BOT_BLOCK_REDIRECT_HOSTS:
+                        job.log(
+                            f"PROBE: Bot-blocking redirect detected (HTTP {resp.status_code} → {location})"
+                        )
+                        job.log("PROBE: Switching to curl_cffi (browser TLS impersonation)")
+                        return True
+
+                    # Redirect to a completely different domain might also be blocking
+                    original_host = urlparse(url).hostname or ""
+                    if redir_host and redir_host != original_host and not redir_host.endswith(f".{original_host}"):
+                        job.log(
+                            f"PROBE: Suspicious cross-domain redirect (HTTP {resp.status_code} → {redir_host})"
+                        )
+                        job.log("PROBE: Switching to curl_cffi (browser TLS impersonation)")
+                        return True
+
+                # Bot UA got 403/503 — check for Cloudflare indicators
+                if resp.status_code in (403, 503):
+                    body_lower = resp.text.lower() if resp.text else ""
+                    cf_matches = [ind for ind in _CF_INDICATORS if ind in body_lower]
+                    if cf_matches:
+                        job.log(
+                            f"PROBE: Cloudflare/bot protection detected (HTTP {resp.status_code}, "
+                            f"indicators: {', '.join(cf_matches[:3])})"
+                        )
+                        job.log("PROBE: Switching to curl_cffi (browser TLS impersonation)")
+                        return True
+
+                # Bot UA got 200 with content — site doesn't block bots
+                if resp.status_code == 200 and len(resp.text or "") > 1000:
+                    body_lower = resp.text.lower()
+                    if "just a moment" in body_lower and "cloudflare" in body_lower:
+                        job.log("PROBE: Cloudflare JS challenge detected (HTTP 200 challenge page)")
+                        job.log("PROBE: Switching to curl_cffi (browser TLS impersonation)")
+                        return True
+                    job.log(f"PROBE: Site accessible with bot UA (HTTP 200, {len(resp.text)} bytes) — no protection detected")
+                    return False
+
+            # Phase 2: Bot UA was blocked or got tiny response — verify with browser UA
+            browser_headers = {
+                "User-Agent": self._BROWSER_UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
+            }
+            async with httpx.AsyncClient(
+                follow_redirects=True, timeout=10.0, headers=browser_headers, verify=False,
             ) as client:
                 resp = await client.get(url)
                 body_lower = resp.text.lower() if resp.text else ""
@@ -263,11 +347,15 @@ class WebIndexer:
                     job.log("PROBE: Switching to curl_cffi (browser TLS impersonation)")
                     return True
 
-                job.log(f"PROBE: Site accessible via httpx (HTTP {resp.status_code})")
+                if resp.status_code == 200:
+                    job.log(f"PROBE: Site accessible with browser UA (HTTP 200, {len(resp.text)} bytes)")
+                    return False
+
+                job.log(f"PROBE: Site returned HTTP {resp.status_code} with browser UA")
                 return False
 
         except Exception as e:
-            job.log(f"PROBE: Probe failed ({str(e)[:80]}), defaulting to httpx")
+            job.log(f"PROBE: Probe failed ({str(e)[:80]}), will use browser UA with httpx")
             return False
 
     # ── HTTP client factory ────────────────────────────────────────
@@ -280,7 +368,11 @@ class WebIndexer:
 
     @asynccontextmanager
     async def _make_http_client(self, use_curl_cffi: bool):
-        """Yield an async HTTP client — curl_cffi (browser impersonation) or httpx."""
+        """Yield an async HTTP client — curl_cffi (browser impersonation) or httpx.
+
+        Both modes use browser UA to avoid bot-blocking.  curl_cffi adds TLS
+        fingerprint impersonation on top, which is needed for Cloudflare etc.
+        """
         if use_curl_cffi and HAS_CURL_CFFI:
             headers = {
                 "User-Agent": self._BROWSER_UA,
@@ -297,8 +389,9 @@ class WebIndexer:
                 yield session
         else:
             headers = {
-                "User-Agent": self._BOT_UA,
-                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": self._BROWSER_UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
             }
             async with httpx.AsyncClient(
                 follow_redirects=True,
@@ -325,7 +418,37 @@ class WebIndexer:
         # "Confirmar tus preferencias" block that sometimes remains
         re.compile(r"Confirmar tus preferencias.*?BLOQUEAR\s+COOKIES", re.DOTALL | re.IGNORECASE),
         re.compile(r"Respetamos tu privacidad.*?BLOQUEAR\s+COOKIES", re.DOTALL | re.IGNORECASE),
+        # E-commerce / Spanish e-commerce boilerplate
+        re.compile(r"A[n\u00f1]adir al carrito.*?(?:\n|$)", re.IGNORECASE),
+        re.compile(r"Add to cart.*?(?:\n|$)", re.IGNORECASE),
+        re.compile(r"Productos?\s+relacionados?.*", re.DOTALL | re.IGNORECASE),
+        re.compile(r"Related products?.*", re.DOTALL | re.IGNORECASE),
+        re.compile(r"Lorem ipsum.*?(?:\n\n|\Z)", re.DOTALL | re.IGNORECASE),
     ]
+
+    # CSS selectors for e-commerce boilerplate elements (always removed from HTML)
+    _ECOMMERCE_EXCLUDE_SELECTORS = [
+        # Navigation & structure
+        "nav", ".nav", "#nav", ".menu", "#menu", ".breadcrumb", ".breadcrumbs",
+        "header", "footer", ".footer", "#footer", "aside", ".sidebar",
+        # Cookie/consent/GDPR
+        "[class*='cookie']", "[id*='cookie']",
+        "[class*='consent']", "[class*='gdpr']",
+        # E-commerce chrome
+        ".cart-widget", ".mini-cart", ".wishlist", ".compare",
+        ".related-products", ".also-bought", ".upsell", ".cross-sell",
+        "[class*='newsletter']", "[class*='popup']", "[class*='modal']",
+    ]
+
+    @staticmethod
+    def _remove_ecommerce_boilerplate(soup: BeautifulSoup) -> None:
+        """Remove hardcoded e-commerce boilerplate elements from soup (mutates in place)."""
+        for selector in WebIndexer._ECOMMERCE_EXCLUDE_SELECTORS:
+            try:
+                for el in soup.select(selector):
+                    el.decompose()
+            except Exception:
+                continue
 
     @staticmethod
     def _strip_boilerplate(text: str) -> str:
@@ -587,6 +710,7 @@ Rules:
                     max_tokens=2048,
                     temperature=0.1,
                     timeout=300,
+                    user="rag:smart-crawl",
                 ),
             )
 
@@ -619,6 +743,9 @@ Rules:
 
         try:
             soup = BeautifulSoup(html, "html.parser")
+
+            # Remove hardcoded e-commerce boilerplate before AI selectors
+            WebIndexer._remove_ecommerce_boilerplate(soup)
 
             # Get title
             if config.title_selector:
@@ -656,7 +783,7 @@ Rules:
                 text = WebIndexer._strip_boilerplate(text)
 
             # If smart extraction yielded too little, fall back to standard
-            if not text or len(text) < 50:
+            if not text or len(text) < WebIndexer.MIN_CONTENT_LENGTH:
                 return WebIndexer._extract_content(html, url)
 
             # Clean up whitespace
@@ -690,7 +817,7 @@ Rules:
             text = WebIndexer._strip_boilerplate(text)
 
         # Fallback: BeautifulSoup if trafilatura returned nothing useful
-        if not text or len(text) < 50:
+        if not text or len(text) < WebIndexer.MIN_CONTENT_LENGTH:
             try:
                 soup = BeautifulSoup(html, "html.parser")
                 # Remove script/style/nav/cookie elements
@@ -699,6 +826,8 @@ Rules:
                 # Remove common cookie/consent containers by class/id
                 for sel in soup.select('[class*="cookie"], [class*="consent"], [id*="cookie"], [id*="consent"], [class*="gdpr"], [id*="gdpr"]'):
                     sel.decompose()
+                # Remove e-commerce boilerplate elements
+                WebIndexer._remove_ecommerce_boilerplate(soup)
                 text = soup.get_text(separator="\n", strip=True)
                 if text:
                     text = WebIndexer._strip_boilerplate(text)
@@ -711,6 +840,102 @@ Rules:
             text = text.strip()
 
         return {"title": title, "text": text, "url": url}
+
+    # ── JSON-LD structured data extraction ─────────────────────────
+
+    @staticmethod
+    def _extract_jsonld(html: str) -> Optional[Dict]:
+        """Extract Product structured data from JSON-LD script tags.
+
+        Returns flattened dict with product_name, product_price, etc.
+        Returns None if no Product schema found.
+        """
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            # Collect all items from all JSON-LD blocks
+            all_items: List[dict] = []
+            for script in soup.find_all("script", type="application/ld+json"):
+                try:
+                    data = json.loads(script.string, strict=False)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(data, dict):
+                    if "@graph" in data:
+                        all_items.extend(data["@graph"])
+                    else:
+                        all_items.append(data)
+                elif isinstance(data, list):
+                    all_items.extend(data)
+
+            result: Dict[str, str] = {}
+
+            # Extract BreadcrumbList → category_path
+            for item in all_items:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("@type") == "BreadcrumbList":
+                    breadcrumbs = item.get("itemListElement", [])
+                    if breadcrumbs:
+                        path = " > ".join(
+                            str(bc.get("item", {}).get("name", "") if isinstance(bc.get("item"), dict) else bc.get("name", ""))
+                            for bc in sorted(breadcrumbs, key=lambda x: x.get("position", 0))
+                            if (bc.get("item", {}).get("name") if isinstance(bc.get("item"), dict) else bc.get("name"))
+                        )
+                        if path:
+                            result["category_path"] = path
+                    break
+
+            # Extract Product schema
+            for item in all_items:
+                if not isinstance(item, dict):
+                    continue
+                item_type = item.get("@type", "")
+                type_list = item_type if isinstance(item_type, list) else [item_type]
+                if "Product" not in type_list:
+                    continue
+
+                offers = item.get("offers", {})
+                if isinstance(offers, list):
+                    offers = offers[0] if offers else {}
+                if not isinstance(offers, dict):
+                    offers = {}
+
+                if item.get("name"):
+                    result["product_name"] = str(item["name"])[:200]
+                if item.get("sku"):
+                    result["product_sku"] = str(item["sku"])
+                ean = item.get("gtin13") or item.get("gtin14") or item.get("gtin")
+                if ean:
+                    result["product_ean"] = str(ean)
+                brand = item.get("brand")
+                if isinstance(brand, dict):
+                    result["product_brand"] = str(brand.get("name", ""))[:100]
+                elif brand:
+                    result["product_brand"] = str(brand)[:100]
+                if item.get("description"):
+                    result["product_description"] = str(item["description"])[:500]
+                img = item.get("image")
+                if img:
+                    result["product_image"] = str(img[0] if isinstance(img, list) else img)[:500]
+
+                if offers.get("price"):
+                    result["product_price"] = str(offers["price"])
+                if offers.get("priceCurrency"):
+                    result["product_currency"] = str(offers["priceCurrency"])
+                if offers.get("availability"):
+                    avail = str(offers["availability"])
+                    if "InStock" in avail:
+                        result["product_availability"] = "InStock"
+                    elif "OutOfStock" in avail:
+                        result["product_availability"] = "OutOfStock"
+                    else:
+                        result["product_availability"] = avail.split("/")[-1]
+                break
+
+            return result if result else None
+        except Exception:
+            pass
+        return None
 
     # ── Link extraction ────────────────────────────────────────────
 
@@ -746,6 +971,10 @@ Rules:
                 skip_exts = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg",
                              ".zip", ".tar", ".gz", ".mp4", ".mp3", ".webp"}
                 if any(clean.lower().endswith(ext) for ext in skip_exts):
+                    continue
+
+                # Skip blacklisted URL patterns
+                if WebIndexer._is_blacklisted_url(clean):
                     continue
 
                 links.append(clean)
@@ -884,23 +1113,13 @@ Rules:
                         job.log(f"SMART: Analysis complete — {len(extraction_config.content_selectors)} content selectors, {len(extraction_config.exclude_selectors)} exclude selectors")
                     else:
                         job.analysis_status = "failed"
-                        job.status = "failed"
-                        job.errors.append("Smart mode analysis failed: LLM could not generate extraction config. Crawl aborted.")
-                        job.log("SMART: Analysis failed. Smart mode was explicitly requested — crawl ABORTED (not falling back to standard extraction)")
-                        job.ended_at = datetime.now(timezone.utc).isoformat()
-                        if progress_callback:
-                            progress_callback(job)
-                        return job
+                        job.log("SMART: Analysis failed (no extraction config). Falling back to standard extraction.")
+                        job.errors.append("Smart mode analysis failed — falling back to standard extraction")
                 except Exception as e:
                     job.analysis_status = "failed"
-                    job.status = "failed"
-                    job.errors.append(f"Smart mode analysis error: {str(e)[:200]}. Crawl aborted.")
-                    job.log(f"SMART: Analysis error: {str(e)[:120]}. Smart mode was explicitly requested — crawl ABORTED")
-                    job.ended_at = datetime.now(timezone.utc).isoformat()
+                    job.log(f"SMART: Analysis error: {str(e)[:120]}. Falling back to standard extraction.")
+                    job.errors.append(f"Smart mode error: {str(e)[:200]} — falling back to standard extraction")
                     logger.warning(f"Smart analysis failed for {start_url}: {e}")
-                    if progress_callback:
-                        progress_callback(job)
-                    return job
 
                 if progress_callback:
                     progress_callback(job)
@@ -989,6 +1208,10 @@ Rules:
                     if url in visited:
                         continue
 
+                    if self._is_blacklisted_url(url):
+                        visited.add(url)
+                        continue
+
                     if not robots.can_fetch("*", url):
                         job.log(f"BLOCKED robots.txt: {url}")
                         continue
@@ -1022,6 +1245,15 @@ Rules:
                             continue
 
                         html = resp.text
+
+                        # Resolve canonical URL after redirects
+                        canonical_url = str(resp.url).rstrip("/")
+                        if canonical_url != url:
+                            if canonical_url in visited:
+                                job.log(f"SKIP redirect duplicate: {url} -> {canonical_url}")
+                                continue
+                            job.log(f"CANONICAL: {url} -> {canonical_url}")
+                            url = canonical_url
                     except Exception as e:
                         job.log(f"FETCH ERROR: {url} — {str(e)[:80]}")
                         job.errors.append(f"Fetch error: {url}: {str(e)[:100]}")
@@ -1034,12 +1266,22 @@ Rules:
                     job.pages_visited = len(visited)
                     job.update_eta()
 
+                    # Extract and queue same-domain links BEFORE content check
+                    # (even thin pages have useful links for BFS discovery)
+                    if depth < max_depth:
+                        links = self._extract_links(html, url)
+                        new_links = [l.rstrip("/") for l in links if l.rstrip("/") not in visited]
+                        for link in new_links:
+                            bfs_queue.append((link, depth + 1))
+                        if new_links:
+                            job.log(f"FOUND {len(new_links)} new links (depth {depth+1}), queue: {len(bfs_queue)}")
+
                     # Extract content (smart or standard)
                     if extraction_config:
                         content = self._extract_content_smart(html, url, extraction_config)
                     else:
                         content = self._extract_content(html, url)
-                    if not content["text"] or len(content["text"]) < 50:
+                    if not content["text"] or len(content["text"]) < self.MIN_CONTENT_LENGTH:
                         job.log(f"SKIP low content ({len(content['text'] or '')} chars): {url}")
                         continue
 
@@ -1049,6 +1291,9 @@ Rules:
                     if content_fingerprints[text_hash] > 3:
                         job.log(f"SKIP duplicate content (seen {content_fingerprints[text_hash]}x): {url}")
                         continue
+
+                    # Extract JSON-LD structured data (product info)
+                    jsonld_data = self._extract_jsonld(html)
 
                     # Chunk and queue (consumer will batch-embed)
                     domain = urlparse(url).netloc
@@ -1070,6 +1315,7 @@ Rules:
                             "title": content["title"],
                             "domain": domain,
                             "fetch_date": now,
+                            "jsonld_data": jsonld_data,
                         })
                         queued_chunks += 1
 
@@ -1078,15 +1324,6 @@ Rules:
                     title_short = (content["title"][:60] + "...") if len(content["title"]) > 60 else content["title"]
                     dedup_note = f" ({len(chunks) - queued_chunks} deduped)" if queued_chunks < len(chunks) else ""
                     job.log(f"SCRAPED [{job.pages_scraped}/{max_pages}] {queued_chunks} chunks{dedup_note} — {title_short or url}")
-
-                    # Extract and queue same-domain links
-                    if depth < max_depth:
-                        links = self._extract_links(html, url)
-                        new_links = [l.rstrip("/") for l in links if l.rstrip("/") not in visited]
-                        for link in new_links:
-                            bfs_queue.append((link, depth + 1))
-                        if new_links:
-                            job.log(f"FOUND {len(new_links)} new links (depth {depth+1}), queue: {len(bfs_queue)}")
 
                     if progress_callback:
                         progress_callback(job)
@@ -1179,21 +1416,26 @@ Rules:
 
         points = []
         for i, item in enumerate(chunk_items):
+            payload = {
+                "url": item["url"],
+                "title": item["title"],
+                "domain": item["domain"],
+                "text": item["text"],
+                "chunk_idx": item["chunk_idx"],
+                "fetch_date": item["fetch_date"],
+                "source_type": "web",
+            }
+            # Merge JSON-LD product data into payload (flattened)
+            if item.get("jsonld_data"):
+                payload.update(item["jsonld_data"])
+
             points.append(PointStruct(
                 id=self._generate_id(item["url"], item["chunk_idx"]),
                 vector={
                     "dense": dense_embeddings[i].tolist(),
                     "sparse": sparse_embeddings[i],
                 },
-                payload={
-                    "url": item["url"],
-                    "title": item["title"],
-                    "domain": item["domain"],
-                    "text": item["text"],
-                    "chunk_idx": item["chunk_idx"],
-                    "fetch_date": item["fetch_date"],
-                    "source_type": "web",
-                },
+                payload=payload,
             ))
 
         return points
@@ -1353,8 +1595,14 @@ Rules:
                 with_payload=True,
             )
 
-            return [
-                {
+            _PRODUCT_KEYS = (
+                "product_name", "product_price", "product_currency", "product_sku",
+                "product_ean", "product_brand", "product_image", "product_availability",
+                "product_description", "category_path",
+            )
+            out = []
+            for r in results.points:
+                item = {
                     "url": r.payload.get("url", ""),
                     "title": r.payload.get("title", ""),
                     "domain": r.payload.get("domain", ""),
@@ -1364,8 +1612,12 @@ Rules:
                     "score": round(r.score, 4),
                     "source_type": "web",
                 }
-                for r in results.points
-            ]
+                for key in _PRODUCT_KEYS:
+                    val = r.payload.get(key)
+                    if val:
+                        item[key] = val
+                out.append(item)
+            return out
 
         except Exception as e:
             logger.error(f"Hybrid search error: {e}")
@@ -1379,8 +1631,8 @@ Rules:
 
         if collection_names is None:
             collection_names = [
-                "code_index", "web_pages", "product_catalog",
-                "competitor_products", "devops_docs",
+                "web_pages", "product_catalog",
+                "competitor_products",
             ]
 
         stats = []

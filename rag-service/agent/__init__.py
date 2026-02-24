@@ -93,10 +93,7 @@ class AgentTask:
 class AgentServices:
     """Shared services passed to all tools via RunContextWrapper[AgentServices]."""
     web_indexer: Any  # WebIndexer
-    retriever: Any  # Optional[CodeRetriever]
     product_indexer: Any  # Optional[ProductIndexer]
-    devops_indexer: Any  # Optional[DevOpsIndexer]
-    log_analyzer: Any  # Optional[LogAnalyzer]
     llm_client: Any  # OpenAI
     task: Optional[AgentTask] = None
 
@@ -104,23 +101,19 @@ class AgentServices:
 # ── System prompt (unchanged from agent_legacy.py) ──
 
 
-SYSTEM_PROMPT = """You are an autonomous AI agent managing a multi-purpose RAG (Retrieval-Augmented Generation) system for an airsoft e-commerce business and DevOps operations. You have tools to:
+SYSTEM_PROMPT = """You are an autonomous AI agent managing a multi-purpose RAG (Retrieval-Augmented Generation) system for an airsoft e-commerce business. You have tools to:
 
 **Web & Content:**
 1. **web_search** — Search the internet to find relevant URLs
 2. **analyze_site** — Check if a URL is accessible and crawlable (detects Cloudflare, SPAs, bot protection)
 3. **crawl_website** — Crawl and index a website into the RAG vector database
-4. **search_indexed** — Search already-indexed content (web pages, code repos, or both)
+4. **search_indexed** — Search already-indexed content (web pages)
 5. **list_collections** — View database statistics for all collections
 6. **list_sources** — See what domains are already indexed
 7. **delete_source** — Remove a domain's content from the index
 
 **Product Catalog:**
 8. **search_products** — Search the Shopify product catalog. REQUIRES `query` parameter (always pass a search string).
-
-**DevOps & SRE:**
-9. **search_devops** — Search DevOps documentation (runbooks, postmortems, config, procedures)
-10. **analyze_logs** — Analyze log text to classify errors, identify services, and match runbooks
 
 ## IMPORTANT RULES — Tool Usage
 
@@ -163,7 +156,11 @@ def create_agent(vllm_base_url: str, api_key: str = "none") -> tuple:
     """
     from .tools import ALL_TOOLS
 
-    async_client = AsyncOpenAI(base_url=vllm_base_url, api_key=api_key)
+    async_client = AsyncOpenAI(
+        base_url=vllm_base_url,
+        api_key=api_key,
+        default_headers={"X-Source-Service": "pocharlies-rag:agent"},
+    )
 
     # Auto-discover model ID from vLLM
     sync_client = OpenAI(base_url=vllm_base_url, api_key=api_key)

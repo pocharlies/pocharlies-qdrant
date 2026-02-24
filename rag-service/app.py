@@ -1149,6 +1149,12 @@ async def translate_batch(request: TranslateRequest):
     )
     translation_jobs[job.job_id] = job
 
+    if job.status == "failed":
+        raise HTTPException(
+            status_code=502,
+            detail=f"Translation failed: {job.logs[-1] if job.logs else 'unknown error'}",
+        )
+
     return {
         "job_id": job.job_id,
         "status": job.status,

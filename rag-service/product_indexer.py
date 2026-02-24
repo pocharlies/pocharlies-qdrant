@@ -55,6 +55,9 @@ class ProductSyncJob:
             "sync_type": self.sync_type,
             "products_found": self.products_found,
             "products_indexed": self.products_indexed,
+            # Aliases expected by the frontend
+            "total_products": self.products_found,
+            "products_synced": self.products_indexed,
             "chunks_indexed": self.chunks_indexed,
             "current_product": self.current_product,
             "errors": self.errors[-10:],
@@ -417,10 +420,14 @@ class ProductIndexer:
             )
             if resp.status_code == 200:
                 data = resp.json().get("result", {})
+                points = data.get("points_count", 0)
+                vectors = data.get("indexed_vectors_count", 0)
                 return {
                     "name": self.COLLECTION_NAME,
-                    "points_count": data.get("points_count", 0),
-                    "vectors_count": data.get("indexed_vectors_count", 0),
+                    "points_count": points,
+                    "vectors_count": vectors,
+                    "total_products": points,
+                    "total_indexed": vectors,
                     "status": data.get("status", "unknown"),
                 }
         except Exception as e:
@@ -430,6 +437,8 @@ class ProductIndexer:
             "name": self.COLLECTION_NAME,
             "points_count": 0,
             "vectors_count": 0,
+            "total_products": 0,
+            "total_indexed": 0,
             "status": "not_found",
         }
 

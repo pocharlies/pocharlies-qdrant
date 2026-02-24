@@ -266,6 +266,7 @@ class ProductClassifier:
                     max_tokens=4096,
                     temperature=0.1,
                     timeout=300,
+                    user="rag:competitor-extract",
                 ),
             )
 

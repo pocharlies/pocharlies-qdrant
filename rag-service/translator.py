@@ -7,6 +7,7 @@ Supports 20 languages with English as hub language.
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -317,8 +318,8 @@ def pack_batches(texts: List[str], max_input_tokens: int = 12000, min_batch: int
 
 
 class TranslationPipeline:
-    MAX_CONCURRENT_CHUNKS = 8
-    MAX_INPUT_TOKENS = 12000
+    MAX_CONCURRENT_CHUNKS = int(os.environ.get("TRANSLATE_MAX_CHUNKS", "1"))
+    MAX_INPUT_TOKENS = int(os.environ.get("TRANSLATE_MAX_INPUT_TOKENS", "12000"))
 
     def __init__(self, llm_client, glossary_store: Optional[GlossaryStore] = None,
                  model_id: Optional[str] = None):
@@ -326,16 +327,24 @@ class TranslationPipeline:
         self.glossary = glossary_store or GlossaryStore()
         self._model_id = model_id
 
-    async def _get_model_id(self) -> Optional[str]:
-        """Return cached model ID, discovering once if needed."""
+    async def _get_model_id(self) -> str:
+        """Return cached model ID. Uses TRANSLATE_MODEL env var if set, else auto-discovers."""
         if self._model_id:
+            return self._model_id
+        # Allow override via env var (e.g. "gpt-4o-mini-fallback" for LiteLLM routing)
+        env_model = os.environ.get("TRANSLATE_MODEL")
+        if env_model:
+            self._model_id = env_model
+            logger.info(f"Using TRANSLATE_MODEL from env: {env_model}")
             return self._model_id
         try:
             loop = asyncio.get_event_loop()
             models = await loop.run_in_executor(None, self.llm_client.models.list)
-            self._model_id = models.data[0].id if models.data else None
+            if not models.data:
+                raise RuntimeError("LLM returned no models — is vLLM running?")
+            self._model_id = models.data[0].id
         except Exception as e:
-            logger.warning(f"Model discovery failed: {e}")
+            raise RuntimeError(f"LLM model discovery failed (is DGX/vLLM running?): {e}") from e
         return self._model_id
 
     async def translate_batch(
@@ -462,8 +471,6 @@ class TranslationPipeline:
 
         try:
             model_id = await self._get_model_id()
-            if not model_id:
-                return texts
 
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
@@ -486,6 +493,17 @@ class TranslationPipeline:
 
         except Exception as e:
             # Bisect retry: split batch in half and retry each
+            # But only for non-connectivity errors (parse failures, truncation, etc.)
+            is_llm_down = (
+                "502" in str(e) or "503" in str(e) or "Bad Gateway" in str(e)
+                or "Connection" in str(e) or "model discovery" in str(e).lower()
+                or "vLLM" in str(e) or "DGX" in str(e)
+            )
+
+            if is_llm_down:
+                logger.error(f"LLM backend unreachable ({len(texts)} texts, depth={_depth}): {e}")
+                raise RuntimeError(f"LLM backend unreachable: {e}") from e
+
             if _depth < 3 and len(texts) > 3:
                 mid = len(texts) // 2
                 logger.warning(f"Chunk failed ({len(texts)} texts, depth={_depth}), bisecting: {e}")
@@ -501,8 +519,8 @@ class TranslationPipeline:
                 )
                 return left + right
 
-            logger.warning(f"Translation chunk failed (depth={_depth}, {len(texts)} texts): {e}")
-            return texts  # fallback: return originals
+            logger.error(f"Translation chunk failed after all retries (depth={_depth}, {len(texts)} texts): {e}")
+            raise RuntimeError(f"Translation failed after all retries: {e}") from e
 
     @staticmethod
     def _parse_translations(response_text: str, expected_count: int, originals: List[str]) -> List[str]:

@@ -37,24 +37,16 @@ def _build_services():
     model = SentenceTransformer(embedding_model)
 
     from web_indexer import WebIndexer
-    from retriever import CodeRetriever
     from product_indexer import ProductIndexer
-    from devops_indexer import DevOpsIndexer, LogAnalyzer
 
     web_indexer = WebIndexer(qdrant_url=qdrant_url, qdrant_api_key=qdrant_api_key, model=model)
-    retriever = CodeRetriever(qdrant_url=qdrant_url, qdrant_api_key=qdrant_api_key, embedding_model=embedding_model)
     product_indexer = ProductIndexer(qdrant_url=qdrant_url, qdrant_api_key=qdrant_api_key, model=model)
-    devops_indexer = DevOpsIndexer(qdrant_url=qdrant_url, qdrant_api_key=qdrant_api_key, model=model)
     llm_client = OpenAI(base_url=vllm_base_url, api_key=llm_api_key)
-    log_analyzer = LogAnalyzer(llm_client=llm_client, devops_indexer=devops_indexer)
 
     from . import AgentServices
     return AgentServices(
         web_indexer=web_indexer,
-        retriever=retriever,
         product_indexer=product_indexer,
-        devops_indexer=devops_indexer,
-        log_analyzer=log_analyzer,
         llm_client=llm_client,
     )
 

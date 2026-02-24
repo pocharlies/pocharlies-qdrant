@@ -486,6 +486,13 @@ body {
   flex-wrap: wrap;
   align-items: center;
 }
+.search-filters {
+  margin-top: 4px;
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
 
 .rag-input {
   flex: 1;
@@ -785,40 +792,6 @@ body {
   border: 1px solid rgba(142,240,177,.3);
 }
 
-.collection-badge.code {
-  color: var(--accent-3);
-  background: rgba(255,200,115,.1);
-  border: 1px solid rgba(255,200,115,.3);
-}
-
-/* ── Code Result Styles ───────────────────────────────────── */
-
-.rag-result-path {
-  flex: 1;
-  font-size: .82rem;
-  font-family: var(--mono);
-  color: var(--accent-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.rag-result-code {
-  margin: 6px 0;
-  padding: 10px 12px;
-  border-radius: var(--radius-xs);
-  background: rgba(0,0,0,.3);
-  border: 1px solid var(--line-soft);
-  font-family: var(--mono);
-  font-size: .78rem;
-  color: var(--muted);
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow: auto;
-  max-height: 220px;
-}
-
 /* ── Footer ───────────────────────────────────────────────── */
 
 .footer {
@@ -995,12 +968,6 @@ body {
   border: 1px solid rgba(255,125,159,.3);
 }
 
-.collection-badge.devops {
-  color: var(--accent-3);
-  background: rgba(255,200,115,.1);
-  border: 1px solid rgba(255,200,115,.3);
-}
-
 .collection-badge.failed {
   color: var(--danger);
   background: rgba(255,125,159,.1);
@@ -1011,6 +978,112 @@ body {
   color: var(--warning);
   background: rgba(255,207,116,.1);
   border: 1px solid rgba(255,207,116,.3);
+}
+
+/* ── Tab Bar ─────────────────────────────────────────────── */
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  border-radius: var(--radius-lg);
+  padding: 6px;
+  position: sticky;
+  top: 8px;
+  z-index: 100;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 180ms ease;
+  position: relative;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+  background: rgba(145, 190, 224, 0.1);
+}
+
+.tab-btn.active {
+  color: var(--accent);
+  background: rgba(70, 213, 255, 0.1);
+}
+
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 20%;
+  right: 20%;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
+.tab-pane {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tab-pane.active {
+  display: flex;
+}
+
+/* ── Lazy-load dropdowns ──────────────────────────────────── */
+
+.lazy-dropdown {
+  border: none;
+  padding: 0;
+}
+
+.lazy-dropdown > .lazy-summary {
+  cursor: pointer;
+  font-size: .92rem;
+  font-weight: 600;
+  color: var(--text);
+  padding: 8px 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.lazy-dropdown > .lazy-summary::-webkit-details-marker { display: none; }
+
+.lazy-dropdown > .lazy-summary::before {
+  content: '\25B6';
+  font-size: .65rem;
+  color: var(--text-dim);
+  transition: transform .15s;
+}
+
+.lazy-dropdown[open] > .lazy-summary::before {
+  transform: rotate(90deg);
+}
+
+.lazy-hint {
+  font-size: .72rem;
+  font-weight: 400;
+}
+
+.lazy-count {
+  font-size: .78rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.lazy-content {
+  padding-top: 6px;
 }
 
 /* ── Competitor: Price Report ────────────────────────────── */
@@ -1071,19 +1144,6 @@ body {
   font-size: .85rem;
   color: var(--text);
   word-break: break-word;
-}
-
-/* ── DevOps: Log Analyzer ────────────────────────────────── */
-
-.devops-log-analyzer {
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
-  background: var(--glass-strong);
-}
-
-.devops-log-analyzer summary {
-  outline: none;
 }
 
 /* ── Chat ────────────────────────────────────────────────── */

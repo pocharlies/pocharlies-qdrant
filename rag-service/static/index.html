@@ -164,192 +164,6 @@
         <div id="competitor-results"></div>
       </section>
 
-      <!-- DevOps Docs -->
-      <section class="section glass">
-        <h2>DevOps Docs</h2>
-        <p class="section-desc">Index documentation, search infrastructure knowledge, and analyze logs.</p>
-        <div class="rag-form">
-          <div class="rag-form-row">
-            <input id="devops-path" type="text" class="rag-input" placeholder="/path/to/docs or /path/to/file.md" />
-            <label class="rag-smart-toggle">
-              <input id="devops-recursive" type="checkbox" checked /> Recursive
-            </label>
-            <button class="btn btn-accent" onclick="indexDevopsDocs()">Index Docs</button>
-          </div>
-        </div>
-        <details class="lazy-dropdown" data-lazy="devops-sources" ontoggle="lazyLoad(this, fetchDevopsSources)">
-          <summary class="lazy-summary">Indexed Docs <span class="lazy-hint muted">click to load</span></summary>
-          <div id="devops-sources" class="lazy-content">
-            <p class="muted">Loading...</p>
-          </div>
-        </details>
-        <div id="devops-results"></div>
-        <details class="devops-log-analyzer" style="margin-top:12px">
-          <summary class="section-desc" style="cursor:pointer;font-weight:600;color:var(--text)">Log Analyzer</summary>
-          <div class="rag-form" style="margin-top:8px">
-            <textarea id="devops-log-input" class="rag-input agent-textarea" rows="4" placeholder="Paste log output here..."></textarea>
-            <div class="rag-form-row" style="margin-top:8px">
-              <input id="devops-log-service" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Service name" />
-              <button class="btn btn-accent" onclick="analyzeLogs()">Analyze Logs</button>
-            </div>
-          </div>
-          <div id="devops-log-results"></div>
-        </details>
-      </section>
-
-      <!-- Code Indexing -->
-      <section class="section glass">
-        <h2>Code Indexing</h2>
-        <p class="section-desc">Index code repositories for semantic code search.</p>
-        <div class="rag-form">
-          <div class="rag-form-row">
-            <input id="code-repo-path" type="text" class="rag-input" placeholder="/path/to/repository" />
-            <input id="code-repo-name" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Repo name (optional)" />
-            <button class="btn btn-accent" onclick="indexCodeRepo()">Index Repo</button>
-          </div>
-        </div>
-        <div id="code-index-status" style="display:none" class="rag-crawl-status">
-          <p id="code-index-info" class="muted"></p>
-        </div>
-        <div id="code-results"></div>
-      </section>
-
-      <!-- Jira Tickets -->
-      <section class="section glass">
-        <div class="section-header-row">
-          <div>
-            <h2>Jira Tickets</h2>
-            <p class="section-desc">Index Jira Cloud tickets for RAG retrieval and search.</p>
-          </div>
-          <div id="jira-connection-badge" class="jira-connection-badge">
-            <span class="agent-status-dot offline"></span>
-            <span class="muted">Checking...</span>
-          </div>
-        </div>
-
-        <!-- Status overview -->
-        <div id="jira-stats-row" class="jira-stats-row" style="display:none">
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="jira-stat-tickets">0</div>
-            <div class="jira-stat-label">Tickets</div>
-          </div>
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="jira-stat-chunks">0</div>
-            <div class="jira-stat-label">Chunks</div>
-          </div>
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="jira-stat-projects">0</div>
-            <div class="jira-stat-label">Projects</div>
-          </div>
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="jira-stat-last-indexed">Never</div>
-            <div class="jira-stat-label">Last Indexed</div>
-          </div>
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="jira-stat-nightly">--</div>
-            <div class="jira-stat-label">Nightly Sync</div>
-          </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="rag-form">
-          <div class="rag-form-row">
-            <input id="jira-import-project" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Project key (all)" />
-            <button id="jira-import-btn" class="btn btn-accent" onclick="startJiraImport()">Full Import</button>
-            <button id="jira-sync-btn" class="btn-ghost btn" onclick="startJiraSync()">Sync Recent (24h)</button>
-          </div>
-        </div>
-
-        <!-- Import progress -->
-        <div id="jira-import-progress" class="rag-crawl-status" style="display:none">
-          <div class="rag-progress-bar-wrap">
-            <div id="jira-progress-bar" class="rag-progress-bar"></div>
-          </div>
-          <p id="jira-import-info" class="muted"></p>
-        </div>
-
-        <!-- Active jobs -->
-        <div id="jira-active-jobs" style="display:none"></div>
-
-        <!-- Indexed projects (lazy-load) -->
-        <details class="lazy-dropdown" data-lazy="jira-sources" ontoggle="lazyLoad(this, fetchJiraSources)">
-          <summary class="lazy-summary">Indexed Projects <span id="jira-sources-count" class="lazy-count"></span> <span class="lazy-hint muted">click to load</span></summary>
-          <div id="jira-sources" class="lazy-content">
-            <p class="muted">Loading...</p>
-          </div>
-        </details>
-
-        <div id="jira-results"></div>
-      </section>
-
-      <!-- Confluence Pages -->
-      <section class="section glass">
-        <div class="section-header-row">
-          <div>
-            <h2>Confluence Pages</h2>
-            <p class="section-desc">Index Confluence Cloud wiki pages for RAG retrieval and search.</p>
-          </div>
-          <div id="confluence-connection-badge" class="jira-connection-badge">
-            <span class="agent-status-dot offline"></span>
-            <span class="muted">Checking...</span>
-          </div>
-        </div>
-
-        <!-- Status overview -->
-        <div id="confluence-stats-row" class="jira-stats-row" style="display:none">
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="confluence-stat-pages">0</div>
-            <div class="jira-stat-label">Pages</div>
-          </div>
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="confluence-stat-chunks">0</div>
-            <div class="jira-stat-label">Chunks</div>
-          </div>
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="confluence-stat-spaces">0</div>
-            <div class="jira-stat-label">Spaces</div>
-          </div>
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="confluence-stat-last-indexed">Never</div>
-            <div class="jira-stat-label">Last Indexed</div>
-          </div>
-          <div class="jira-stat-card glass">
-            <div class="jira-stat-value" id="confluence-stat-nightly">--</div>
-            <div class="jira-stat-label">Nightly Sync</div>
-          </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="rag-form">
-          <div class="rag-form-row">
-            <input id="confluence-import-space" type="text" class="rag-input rag-input-sm" style="flex:0 0 140px" placeholder="Space key (all)" />
-            <button id="confluence-import-btn" class="btn btn-accent" onclick="startConfluenceImport()">Full Import</button>
-            <button id="confluence-sync-btn" class="btn-ghost btn" onclick="startConfluenceSync()">Sync Recent (24h)</button>
-          </div>
-        </div>
-
-        <!-- Import progress -->
-        <div id="confluence-import-progress" class="rag-crawl-status" style="display:none">
-          <div class="rag-progress-bar-wrap">
-            <div id="confluence-progress-bar" class="rag-progress-bar"></div>
-          </div>
-          <p id="confluence-import-info" class="muted"></p>
-        </div>
-
-        <!-- Active jobs -->
-        <div id="confluence-active-jobs" style="display:none"></div>
-
-        <!-- Indexed spaces (lazy-load) -->
-        <details class="lazy-dropdown" data-lazy="confluence-sources" ontoggle="lazyLoad(this, fetchConfluenceSources)">
-          <summary class="lazy-summary">Indexed Spaces <span id="confluence-sources-count" class="lazy-count"></span> <span class="lazy-hint muted">click to load</span></summary>
-          <div id="confluence-sources" class="lazy-content">
-            <p class="muted">Loading...</p>
-          </div>
-        </details>
-
-        <div id="confluence-results"></div>
-      </section>
-
     </div><!-- /tab:sources -->
 
     <!-- ═══════════════════════════════════════════════════════ -->
@@ -367,12 +181,8 @@
             <select id="rag-search-collection" class="rag-select" onchange="onSearchCollectionChange(this.value)">
               <option value="all">All collections</option>
               <option value="web">Web pages</option>
-              <option value="code">Code index</option>
               <option value="products">Products</option>
               <option value="competitors">Competitors</option>
-              <option value="devops">DevOps</option>
-              <option value="jira">Jira</option>
-              <option value="confluence">Confluence</option>
             </select>
             <input id="rag-search-topk" type="number" class="rag-input rag-input-sm" value="10" min="1" max="50" placeholder="Top K" />
             <button class="btn btn-accent" onclick="searchRag()">Search</button>
@@ -383,39 +193,9 @@
             <select id="rag-search-domain" class="rag-select search-filter" data-collections="web,competitors" style="display:none">
               <option value="">All domains</option>
             </select>
-            <!-- Code filters -->
-            <input id="rag-search-repo" type="text" class="rag-input rag-input-sm search-filter" data-collections="code" placeholder="Repo filter" style="display:none" />
             <!-- Product filters -->
             <input id="rag-search-brand" type="text" class="rag-input rag-input-sm search-filter" data-collections="products" placeholder="Brand" style="display:none" />
             <input id="rag-search-category" type="text" class="rag-input rag-input-sm search-filter" data-collections="products" placeholder="Category" style="display:none" />
-            <!-- Jira filters -->
-            <select id="rag-search-jira-project" class="rag-select search-filter" data-collections="jira" style="display:none">
-              <option value="">All projects</option>
-            </select>
-            <select id="rag-search-jira-assignee" class="rag-select search-filter" data-collections="jira" style="display:none">
-              <option value="">All assignees</option>
-            </select>
-            <select id="rag-search-jira-type" class="rag-select search-filter" data-collections="jira" style="display:none">
-              <option value="">All types</option>
-              <option value="Bug">Bug</option>
-              <option value="Story">Story</option>
-              <option value="Task">Task</option>
-              <option value="Epic">Epic</option>
-              <option value="Sub-task">Sub-task</option>
-            </select>
-            <!-- Confluence filters -->
-            <select id="rag-search-confluence-space" class="rag-select search-filter" data-collections="confluence" style="display:none">
-              <option value="">All spaces</option>
-            </select>
-            <select id="rag-search-confluence-author" class="rag-select search-filter" data-collections="confluence" style="display:none">
-              <option value="">All authors</option>
-            </select>
-            <select id="rag-search-confluence-department" class="rag-select search-filter" data-collections="confluence" style="display:none">
-              <option value="">All departments</option>
-            </select>
-            <select id="rag-search-confluence-topic" class="rag-select search-filter" data-collections="confluence" style="display:none">
-              <option value="">All topics</option>
-            </select>
           </div>
         </div>
         <div id="rag-results">
@@ -430,7 +210,7 @@
         <div id="chat-messages" class="chat-messages">
           <div class="chat-message assistant">
             <span class="chat-role">AI</span>
-            <div class="chat-text">Ask me anything. I can use RAG to search indexed content and tools to explore code.</div>
+            <div class="chat-text">Ask me anything. I can use RAG to search indexed content.</div>
           </div>
         </div>
         <div class="rag-form">
@@ -439,9 +219,6 @@
                    onkeydown="if(event.key==='Enter')sendChat()" />
             <label class="rag-smart-toggle" title="Use RAG context">
               <input id="chat-use-rag" type="checkbox" checked /> RAG
-            </label>
-            <label class="rag-smart-toggle" title="Allow tool use">
-              <input id="chat-use-tools" type="checkbox" /> Tools
             </label>
             <button class="btn btn-accent" onclick="sendChat()">Send</button>
           </div>
@@ -475,25 +252,15 @@
       <!-- Translation -->
       <section class="section glass">
         <h2>Translation</h2>
-        <p class="section-desc">Translate text and normalize product specifications. Uses airsoft terminology glossary for accurate domain translations.</p>
+        <p class="section-desc">Translate text and normalize product specifications. Uses airsoft terminology glossary (20 languages) for accurate domain translations.</p>
         <div class="rag-form">
           <div class="rag-form-row">
             <textarea id="translate-input" class="rag-input agent-textarea" rows="3"
                       placeholder="Enter text to translate (one per line for batch)..."></textarea>
             <div class="translate-controls">
-              <select id="translate-source" class="rag-select">
-                <option value="en">English</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-              </select>
+              <select id="translate-source" class="rag-select"></select>
               <span class="translate-arrow">&rarr;</span>
-              <select id="translate-target" class="rag-select">
-                <option value="es" selected>Spanish</option>
-                <option value="en">English</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-              </select>
+              <select id="translate-target" class="rag-select"></select>
               <button class="btn btn-accent" onclick="translateBatch()">Translate</button>
             </div>
           </div>
@@ -512,6 +279,11 @@
         </p>
         <div class="rag-form">
           <div class="rag-form-row" style="gap:.5rem;align-items:center">
+            <select id="glossary-source-lang" class="rag-select" style="width:auto" onchange="loadGlossary()"></select>
+            <span class="translate-arrow">&rarr;</span>
+            <select id="glossary-target-lang" class="rag-select" style="width:auto" onchange="loadGlossary()"></select>
+          </div>
+          <div class="rag-form-row" style="gap:.5rem;align-items:center;margin-top:.5rem">
             <input id="glossary-source" class="rag-input" style="flex:1" placeholder="Source term (e.g. inner barrel)">
             <span class="translate-arrow">&rarr;</span>
             <input id="glossary-target" class="rag-input" style="flex:1" placeholder="Translation (e.g. ca&ntilde;&oacute;n interior)">

@@ -81,38 +81,27 @@ async def crawl_website(
 async def search_indexed(
     ctx: Ctx,
     query: str,
-    collection: str = "all",
     domain: Optional[str] = None,
-    repo: Optional[str] = None,
     top_k: int = 5,
 ) -> str:
-    """Search the RAG database for indexed content. Supports web pages, code repositories, or both.
+    """Search the RAG database for indexed web content.
 
     Args:
         query: Search query.
-        collection: Collection to search: 'all' (both), 'web' (web pages), 'code' (code repos). Default: all.
-        domain: Filter by domain (web only, optional).
-        repo: Filter by repository name (code only, optional).
+        domain: Filter by domain (optional).
         top_k: Number of results (default: 5).
     """
     svc = ctx.context
     if svc.task:
-        svc.task.log(f"TOOL search_indexed: '{query}' (collection={collection}, domain={domain}, repo={repo})")
-        svc.task.add_step("tool_call", f"search_indexed('{query}', collection={collection})")
+        svc.task.log(f"TOOL search_indexed: '{query}' (domain={domain})")
+        svc.task.add_step("tool_call", f"search_indexed('{query}')")
     try:
         formatted = []
         top_k = int(top_k)
 
-        if collection in ("all", "web"):
-            web_results = svc.web_indexer.search(query=query, top_k=top_k, domain_filter=domain)
-            for r in web_results:
-                formatted.append(f"[WEB {r['score']:.2f}] {r.get('title', 'Untitled')} — {r['url']}\n{r['text'][:300]}")
-
-        if collection in ("all", "code") and svc.retriever:
-            code_results = svc.retriever.retrieve(query=query, top_k=top_k, repo_filter=repo)
-            for r in code_results:
-                symbols_str = f" | symbols: {', '.join(r.symbols)}" if r.symbols else ""
-                formatted.append(f"[CODE {r.score:.2f}] {r.repo}/{r.path}#L{r.start_line}-{r.end_line}{symbols_str}\n{r.text[:300]}")
+        web_results = svc.web_indexer.search(query=query, top_k=top_k, domain_filter=domain)
+        for r in web_results:
+            formatted.append(f"[WEB {r['score']:.2f}] {r.get('title', 'Untitled')} — {r['url']}\n{r['text'][:300]}")
 
         if not formatted:
             msg = f"No results found for '{query}'"
@@ -390,113 +379,6 @@ async def search_products(
         return err
 
 
-# ── DevOps & SRE tools ───────────────────────────────
-
-
-@function_tool
-async def search_devops(
-    ctx: Ctx,
-    query: str,
-    doc_type: Optional[str] = None,
-    top_k: int = 5,
-) -> str:
-    """Search DevOps documentation: runbooks, postmortems, config files, procedures.
-
-    Args:
-        query: Search query (e.g. 'vLLM OOM recovery').
-        doc_type: Filter by doc type: runbook, postmortem, config, procedure, architecture, documentation.
-        top_k: Number of results (default: 5).
-    """
-    svc = ctx.context
-    if not svc.devops_indexer:
-        return "DevOps indexer not configured."
-
-    if not query:
-        query = doc_type if doc_type else "devops documentation"
-
-    if svc.task:
-        svc.task.log(f"TOOL search_devops: '{query}' (doc_type={doc_type})")
-        svc.task.add_step("tool_call", f"search_devops('{query}', doc_type={doc_type})")
-    try:
-        results = svc.devops_indexer.search(
-            query=query,
-            top_k=int(top_k),
-            doc_type_filter=doc_type,
-        )
-        if not results:
-            msg = f"No DevOps docs found for '{query}'"
-            if svc.task:
-                svc.task.add_step("tool_result", msg)
-            return msg
-
-        formatted = []
-        for r in results:
-            formatted.append(f"[DEVOPS {r['score']:.2f}] {r.get('title', 'Untitled')} ({r.get('doc_type', 'unknown')})\n  Source: {r.get('source_path', 'N/A')}\n  {r['text'][:300]}")
-
-        result = "\n\n".join(formatted)
-        if svc.task:
-            svc.task.add_step("tool_result", f"{len(formatted)} docs found")
-            svc.task.log(f"RESULT: {len(formatted)} devops docs")
-        return result
-    except Exception as e:
-        err = f"DevOps search failed: {str(e)[:300]}"
-        if svc.task:
-            svc.task.add_step("tool_result", err)
-        return err
-
-
-@function_tool
-async def analyze_logs(
-    ctx: Ctx,
-    log_text: str,
-    service: str = "unknown",
-) -> str:
-    """Analyze log text to classify errors by severity, identify services, and match related runbooks.
-
-    Args:
-        log_text: Log text to analyze (error logs, container output, etc.).
-        service: Source service name (e.g. 'vllm', 'litellm', 'nginx').
-    """
-    svc = ctx.context
-    if not svc.log_analyzer:
-        return "Log analyzer not configured."
-
-    if svc.task:
-        svc.task.log(f"TOOL analyze_logs: {len(log_text)} chars from '{service}'")
-        svc.task.add_step("tool_call", f"analyze_logs(service={service}, {len(log_text)} chars)")
-    try:
-        job = await svc.log_analyzer.analyze_logs(log_text=log_text, source_service=service)
-        if not job.results:
-            msg = "No notable errors or warnings found in the log text."
-            if svc.task:
-                svc.task.add_step("tool_result", msg)
-            return msg
-
-        formatted = []
-        for r in job.results:
-            runbooks_str = ""
-            if r.get("related_runbooks"):
-                runbooks_str = "\n  Related runbooks: " + ", ".join(
-                    rb.get("title", "?") for rb in r["related_runbooks"][:3]
-                )
-            formatted.append(
-                f"[{r.get('severity', 'unknown').upper()}] {r.get('error_type', 'unknown')} — {r.get('summary', '')}"
-                f"\n  Service: {r.get('service', service)}"
-                f"{runbooks_str}"
-            )
-
-        result = "\n\n".join(formatted)
-        if svc.task:
-            svc.task.add_step("tool_result", f"{len(formatted)} issues found")
-            svc.task.log(f"RESULT: {len(formatted)} log issues")
-        return result
-    except Exception as e:
-        err = f"Log analysis failed: {str(e)[:300]}"
-        if svc.task:
-            svc.task.add_step("tool_result", err)
-        return err
-
-
 # ── Export list ───────────────────────────────────────
 
 ALL_TOOLS = [
@@ -508,6 +390,4 @@ ALL_TOOLS = [
     web_search,
     analyze_site,
     search_products,
-    search_devops,
-    analyze_logs,
 ]
