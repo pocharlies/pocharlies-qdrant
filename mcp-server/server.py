@@ -229,6 +229,15 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     logger.info("Loading BM25 sparse encoder (Qdrant/bm25)...")
     bm25_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
+    # Clean up removed collections (code_index, devops_docs, jira_tickets)
+    _REMOVED_COLLECTIONS = ["code_index", "devops_docs", "jira_tickets"]
+    for col_name in _REMOVED_COLLECTIONS:
+        try:
+            qdrant.delete_collection(col_name)
+            logger.info(f"Deleted legacy collection: {col_name}")
+        except Exception:
+            pass  # collection doesn't exist, nothing to do
+
     logger.info(f"MCP server ready — Qdrant: {QDRANT_URL}, embed_dim: {embed_dim}")
 
     try:
@@ -674,8 +683,8 @@ async def rag_query(
     category: Optional[str] = None,
 ) -> str:
     """RAG search: query → embed → search top-K chunks across all indexed collections.
-    Returns the most relevant content from products, web pages, competitors, code, and devops docs.
-    Use collection='all' to search everywhere, or filter by: 'products', 'web', 'code', 'competitors', 'devops'.
+    Returns the most relevant content from products, web pages, and competitors.
+    Use collection='all' to search everywhere, or filter by: 'products', 'web', 'competitors'.
     This is the primary tool for retrieving context to augment your responses."""
 
     await ctx.info(f"RAG search: '{query}' in {collection} (top_k={top_k})...")
@@ -712,7 +721,7 @@ async def rag_query(
                 "score": r.get("score", 0),
                 "collection": r.get("collection", "unknown"),
             }
-            for key in ("title", "url", "domain", "brand", "price", "repo"):
+            for key in ("title", "url", "domain", "brand", "price"):
                 if r.get(key):
                     item[key] = r[key]
             if r.get("path"):
@@ -818,46 +827,7 @@ async def product_stats(
         return json.dumps({"error": f"Product stats failed: {str(e)[:300]}"})
 
 
-# ── 3. Code Search ────────────────────────────────────────────────
-
-
-@mcp.tool()
-async def code_search(
-    query: str,
-    ctx: Context[ServerSession, AppContext],
-    top_k: int = 8,
-    repo: Optional[str] = None,
-    language: Optional[str] = None,
-) -> str:
-    """Search indexed code repositories using hybrid search (dense + sparse + reranking).
-    Returns code chunks with file paths, line numbers, and extracted symbols (functions, classes).
-    Filter by repo name or programming language (py, js, ts, go, rs, java, etc.)."""
-
-    await ctx.info(f"Code search: '{query}' (top_k={top_k}, repo={repo}, lang={language})...")
-
-    try:
-        payload: Dict = {"query": query, "top_k": top_k, "rerank": True}
-        if repo:
-            payload["repo"] = repo
-        if language:
-            payload["language"] = language
-
-        data = await _pocharlies_post("/retrieve", payload)
-        results = data.get("results", [])
-
-        return json.dumps({
-            "query": query,
-            "total_results": len(results),
-            "results": results,
-        }, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Code search failed: {str(e)[:300]}"})
-
-
-# ── 4. Web Content Search ─────────────────────────────────────────
+# ── 3. Web Content Search ─────────────────────────────────────────
 
 
 @mcp.tool()
@@ -995,7 +965,7 @@ async def web_crawl_stop(
         return json.dumps({"error": f"Stop failed: {str(e)[:300]}"})
 
 
-# ── 5. Competitor Analysis ────────────────────────────────────────
+# ── 4. Competitor Analysis ────────────────────────────────────────
 
 
 @mcp.tool()
@@ -1111,7 +1081,7 @@ async def compare_prices(
         return json.dumps({"error": f"Price comparison failed: {str(e)[:300]}"})
 
 
-# ── 6. Translation ────────────────────────────────────────────────
+# ── 5. Translation ────────────────────────────────────────────────
 
 
 @mcp.tool()
@@ -1173,124 +1143,7 @@ async def normalize_specs(
         return json.dumps({"error": f"Normalization failed: {str(e)[:300]}"})
 
 
-# ── 7. DevOps Documentation ──────────────────────────────────────
-
-
-@mcp.tool()
-async def devops_search(
-    query: str,
-    ctx: Context[ServerSession, AppContext],
-    top_k: int = 5,
-    doc_type: Optional[str] = None,
-) -> str:
-    """Search indexed DevOps documentation using hybrid search.
-    doc_type filter: 'runbook', 'postmortem', 'config', 'procedure', 'architecture', 'documentation'.
-    Returns relevant chunks from runbooks, configs, procedures, and architecture docs."""
-
-    await ctx.info(f"DevOps search: '{query}' (top_k={top_k})...")
-
-    try:
-        payload: Dict = {"query": query, "top_k": top_k}
-        if doc_type:
-            payload["doc_type"] = doc_type
-
-        data = await _pocharlies_post("/devops/search", payload)
-        return json.dumps({
-            "query": query,
-            "total_results": len(data.get("results", [])),
-            "results": data.get("results", []),
-        }, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"DevOps search failed: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def devops_index(
-    path: str,
-    ctx: Context[ServerSession, AppContext],
-    recursive: bool = True,
-) -> str:
-    """Index DevOps documentation files from a filesystem path into the devops_docs collection.
-    Supports: .md, .txt, .rst, .pdf, .yaml, .json, .toml, .conf, .cfg files.
-    Auto-classifies docs as: runbook, postmortem, config, procedure, architecture, documentation."""
-
-    await ctx.info(f"Indexing DevOps docs from: {path}...")
-
-    try:
-        payload = {"path": path, "recursive": recursive}
-        data = await _pocharlies_post("/devops/index", payload, timeout=300.0)
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"DevOps indexing failed: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def devops_sources(
-    ctx: Context[ServerSession, AppContext],
-) -> str:
-    """List all indexed DevOps documentation sources with chunk counts."""
-
-    try:
-        data = await _pocharlies_get("/devops/sources")
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Failed: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def devops_delete_source(
-    source_path: str,
-    ctx: Context[ServerSession, AppContext],
-) -> str:
-    """Delete all indexed DevOps documentation from a specific source path."""
-
-    try:
-        data = await _pocharlies_delete(f"/devops/source/{source_path}")
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Delete failed: {str(e)[:300]}"})
-
-
-# ── 8. Log Analysis ──────────────────────────────────────────────
-
-
-@mcp.tool()
-async def analyze_logs(
-    log_text: str,
-    ctx: Context[ServerSession, AppContext],
-    service: str = "unknown",
-) -> str:
-    """Analyze log text using LLM to classify issues by severity (critical/error/warning/info).
-    Pre-filters with keyword detection, then sends interesting lines to LLM for classification.
-    Matches related DevOps runbooks for each error found.
-    Pass raw log output as log_text and optionally the service name."""
-
-    await ctx.info(f"Analyzing logs ({len(log_text)} chars, service={service})...")
-
-    try:
-        payload = {"log_text": log_text, "service": service}
-        data = await _pocharlies_post("/devops/analyze-logs", payload, timeout=120.0)
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Log analysis failed: {str(e)[:300]}"})
-
-
-# ── 9. Chat with RAG Context ─────────────────────────────────────
+# ── 6. Chat with RAG Context ──────────────────────────────────────
 
 
 @mcp.tool()
@@ -1298,11 +1151,10 @@ async def chat_with_rag(
     query: str,
     ctx: Context[ServerSession, AppContext],
     use_rag: bool = True,
-    repo: Optional[str] = None,
     max_tokens: int = 4096,
 ) -> str:
     """Chat with the DGX LLM using RAG-augmented context from all indexed collections.
-    Automatically searches products, web pages, competitors, code, and DevOps docs,
+    Automatically searches products, web pages, and competitors,
     then injects the most relevant context into the LLM prompt.
     Use this for complex questions that benefit from indexed knowledge."""
 
@@ -1315,8 +1167,6 @@ async def chat_with_rag(
             "use_tools": False,
             "max_tokens": max_tokens,
         }
-        if repo:
-            payload["repo"] = repo
 
         data = await _pocharlies_post("/chat", payload, timeout=120.0)
 
@@ -1332,54 +1182,7 @@ async def chat_with_rag(
         return json.dumps({"error": f"Chat failed: {str(e)[:300]}"})
 
 
-# ── 10. Code Repository Indexing ──────────────────────────────────
-
-
-@mcp.tool()
-async def index_repository(
-    repo_path: str,
-    ctx: Context[ServerSession, AppContext],
-    repo_name: Optional[str] = None,
-) -> str:
-    """Index a code repository into the code_index collection for semantic code search.
-    Supports: .py, .js, .ts, .tsx, .go, .rs, .java, .cpp, .rb, .php, .swift, .kt, .scala, .sh, .yaml, .json, .md, .sql, .html, .css, .vue, .svelte.
-    Extracts symbols (functions, classes) and generates hybrid embeddings."""
-
-    await ctx.info(f"Indexing repository: {repo_path}...")
-
-    try:
-        payload: Dict = {"repo_path": repo_path}
-        if repo_name:
-            payload["repo_name"] = repo_name
-
-        data = await _pocharlies_post("/index", payload, timeout=600.0)
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Repository indexing failed: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def delete_repository(
-    repo_name: str,
-    ctx: Context[ServerSession, AppContext],
-) -> str:
-    """Delete all indexed code from a repository in the code_index collection."""
-
-    try:
-        payload = {"repo_name": repo_name}
-        data = await _pocharlies_post("/delete", payload)
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Delete failed: {str(e)[:300]}"})
-
-
-# ── 11. Direct Qdrant Operations ─────────────────────────────────
+# ── 7. Direct Qdrant Operations ───────────────────────────────────
 
 
 @mcp.tool()
@@ -1510,7 +1313,7 @@ async def get_collection_info(
         return json.dumps({"error": f"Failed to get collection info: {str(e)[:200]}"})
 
 
-# ── 12. Health & Stats ────────────────────────────────────────────
+# ── 8. Health & Stats ─────────────────────────────────────────────
 
 
 @mcp.tool()
@@ -1518,7 +1321,7 @@ async def rag_health(
     ctx: Context[ServerSession, AppContext],
 ) -> str:
     """Check the health of the entire RAG infrastructure: Qdrant connectivity, pocharlies service status,
-    all collection stats (point counts), and available services (reranker, shopify, devops, products).
+    all collection stats (point counts), and available services (reranker, shopify, products).
     Use this to diagnose connectivity issues or verify the system is ready."""
 
     app = _get_ctx(ctx)
@@ -1564,8 +1367,8 @@ async def rag_health(
 async def collection_stats(
     ctx: Context[ServerSession, AppContext],
 ) -> str:
-    """Get statistics for ALL Qdrant collections: code_index, web_pages, product_catalog,
-    competitor_products, devops_docs. Shows point counts, vector counts, and status for each."""
+    """Get statistics for ALL Qdrant collections: web_pages, product_catalog,
+    competitor_products. Shows point counts, vector counts, and status for each."""
 
     try:
         data = await _pocharlies_get("/web/collections")
@@ -1575,167 +1378,6 @@ async def collection_stats(
         return json.dumps({"error": _connect_error_msg()})
     except Exception as e:
         return json.dumps({"error": f"Stats failed: {str(e)[:300]}"})
-
-
-# ── 13. Jira Tickets ──────────────────────────────────────────────
-
-
-@mcp.tool()
-async def jira_search(
-    query: str,
-    ctx: Context[ServerSession, AppContext],
-    top_k: int = 8,
-    project: Optional[str] = None,
-    assignee: Optional[str] = None,
-    ticket_key: Optional[str] = None,
-    issue_type: Optional[str] = None,
-) -> str:
-    """Search indexed Jira tickets using hybrid search.
-    Filters: project (e.g. 'SHOP'), assignee, ticket_key (e.g. 'SHOP-123'), issue_type ('Bug', 'Story', 'Task', 'Epic').
-    Returns relevant ticket chunks with summaries, descriptions, and comments."""
-
-    await ctx.info(f"Jira search: '{query}' (top_k={top_k})...")
-
-    try:
-        params: Dict = {"query": query, "top_k": top_k}
-        if project:
-            params["project"] = project
-        if assignee:
-            params["assignee"] = assignee
-        if ticket_key:
-            params["ticket_key"] = ticket_key
-        if issue_type:
-            params["issue_type"] = issue_type
-
-        data = await _pocharlies_get("/jira/search", params=params)
-        return json.dumps({
-            "query": query,
-            "total_results": len(data.get("results", [])),
-            "results": data.get("results", []),
-        }, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Jira search failed: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def jira_import_all(
-    ctx: Context[ServerSession, AppContext],
-    project: Optional[str] = None,
-) -> str:
-    """Import all Jira tickets into the vector index for semantic search.
-    Optionally filter by project key (e.g. 'SHOP'). This is a long-running operation.
-    Returns a job_id to check progress with jira_import_status."""
-
-    label = f" (project={project})" if project else ""
-    await ctx.info(f"Starting Jira import{label}...")
-
-    try:
-        payload: Dict = {}
-        if project:
-            payload["project"] = project
-
-        data = await _pocharlies_post("/jira/import", payload, timeout=600.0)
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Jira import failed: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def jira_import_status(
-    job_id: str,
-    ctx: Context[ServerSession, AppContext],
-) -> str:
-    """Check the status of a Jira import job. Pass the job_id returned by jira_import_all."""
-
-    try:
-        data = await _pocharlies_get(f"/jira/import/status/{job_id}")
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Jira import status check failed: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def jira_sync(
-    ctx: Context[ServerSession, AppContext],
-    since_hours: int = 24,
-) -> str:
-    """Sync recent Jira ticket changes into the vector index.
-    Fetches tickets updated in the last since_hours (default 24) and re-indexes them."""
-
-    await ctx.info(f"Syncing Jira changes from last {since_hours}h...")
-
-    try:
-        payload: Dict = {"since_hours": since_hours}
-        data = await _pocharlies_post("/jira/sync", payload, timeout=300.0)
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Jira sync failed: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def jira_sources(
-    ctx: Context[ServerSession, AppContext],
-) -> str:
-    """List all indexed Jira projects with ticket counts and last sync timestamps."""
-
-    try:
-        data = await _pocharlies_get("/jira/sources")
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Failed to list Jira sources: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def jira_delete_project(
-    project: str,
-    ctx: Context[ServerSession, AppContext],
-) -> str:
-    """Delete all indexed Jira data for a specific project key (e.g. 'SHOP')."""
-
-    try:
-        data = await _pocharlies_delete(f"/jira/source/{project}")
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Jira project delete failed: {str(e)[:300]}"})
-
-
-@mcp.tool()
-async def jira_ticket(
-    ticket_key: str,
-    ctx: Context[ServerSession, AppContext],
-) -> str:
-    """Fetch a live Jira ticket by key (e.g. 'SHOP-123') directly from the Jira API.
-    Returns the full ticket with summary, description, status, assignee, comments, and metadata.
-    This bypasses the index and always returns the latest data."""
-
-    await ctx.info(f"Fetching Jira ticket: {ticket_key}...")
-
-    try:
-        data = await _pocharlies_get(f"/jira/ticket/{ticket_key}")
-        return json.dumps(data, indent=2)
-
-    except httpx.ConnectError:
-        return json.dumps({"error": _connect_error_msg()})
-    except Exception as e:
-        return json.dumps({"error": f"Failed to fetch Jira ticket: {str(e)[:300]}"})
 
 
 # ── Entry point ───────────────────────────────────────────────────

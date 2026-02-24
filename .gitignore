@@ -1,4 +1,5 @@
 .env
+.venv/
 repos/
 *.pyc
 __pycache__/

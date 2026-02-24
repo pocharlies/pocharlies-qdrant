@@ -1,0 +1,107 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pocharlies/qdrant-rag",
+  "title": "Qdrant RAG Server",
+  "description": "E-commerce RAG platform powered by Qdrant hybrid search. Provides product catalog search (Shopify), web crawling & indexing, competitor intelligence with price comparison, multi-language translation, and LLM chat with RAG context.",
+  "version": "1.0.0",
+  "websiteUrl": "https://github.com/pocharlies/pocharlies-qdrant",
+  "repository": {
+    "url": "https://github.com/pocharlies/pocharlies-qdrant",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "pocharlies-qdrant-mcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeHint": "python",
+      "packageArguments": ["mcp-server/server.py"],
+      "environmentVariables": [
+        {
+          "name": "QDRANT_URL",
+          "description": "Qdrant vector database URL",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "QDRANT_API_KEY",
+          "description": "Qdrant API key for authentication",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "POCHARLIES_RAG_URL",
+          "description": "Backend RAG service URL (Flask/Uvicorn) that handles crawling, classification, translation, and product sync",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "EMBEDDING_MODEL",
+          "description": "HuggingFace embedding model for dense vectors (default: BAAI/bge-base-en-v1.5)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "LLM_BASE_URL",
+          "description": "OpenAI-compatible LLM API base URL (used by the backend for classification, translation, and chat)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "LLM_API_KEY",
+          "description": "API key for the LLM service",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "SHOPIFY_SHOP_DOMAIN",
+          "description": "Shopify store domain (e.g., mystore.myshopify.com) for product catalog sync",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SHOPIFY_ACCESS_TOKEN",
+          "description": "Shopify Admin API access token for product catalog sync",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "RERANKER_MODEL",
+          "description": "Cross-encoder reranker model for search quality (default: BAAI/bge-reranker-v2-m3)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "RERANKER_ENABLED",
+          "description": "Enable/disable reranking (default: true)",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.github.pocharlies/qdrant-rag": {
+      "tools_count": 24,
+      "tool_categories": {
+        "rag_search": ["rag_query", "chat_with_rag"],
+        "product_catalog": ["product_search", "product_sync", "product_stats"],
+        "web_crawling": ["web_search_indexed", "web_sources", "web_delete_source", "web_crawl_start", "web_crawl_status", "web_crawl_stop"],
+        "competitor_intelligence": ["competitor_crawl", "competitor_sources", "competitor_delete_source", "classify_competitor_products", "compare_prices"],
+        "translation": ["translate_text", "normalize_specs"],
+        "vector_operations": ["search_collection", "delete_collection", "index_text", "get_collection_info"],
+        "health": ["rag_health", "collection_stats"]
+      },
+      "embedding_models": {
+        "dense": "BAAI/bge-base-en-v1.5",
+        "sparse": "Qdrant/bm25",
+        "reranker": "BAAI/bge-reranker-v2-m3"
+      },
+      "supported_languages": ["en", "es", "ca", "fr", "de", "it", "pt", "eu", "gl"],
+      "infrastructure": ["qdrant", "redis", "pocharlies-rag-service"]
+    }
+  }
+}
