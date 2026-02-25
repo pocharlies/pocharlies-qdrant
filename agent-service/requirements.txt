@@ -1,0 +1,32 @@
+# LangGraph core + Postgres persistence
+langgraph>=0.4.0
+langgraph-checkpoint-postgres>=2.0.0
+
+# LangChain LLM integration (OpenAI-compatible via LiteLLM)
+langchain-openai>=0.3.0
+langchain-core>=0.3.0
+
+# MCP client
+mcp>=1.8.0
+
+# API layer
+fastapi>=0.115.0
+uvicorn>=0.34.0
+websockets>=14.0
+
+# Database
+asyncpg>=0.30.0
+psycopg[binary]>=3.2.0
+sqlalchemy[asyncio]>=2.0.0
+
+# Scheduler
+apscheduler>=4.0.0a5
+
+# Redis
+redis[hiredis]>=5.0.0
+
+# Utilities
+pydantic>=2.5.0
+pydantic-settings>=2.0.0
+httpx>=0.27.0
+python-dotenv>=1.0.0
