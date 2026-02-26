@@ -17,6 +17,7 @@ const state = {
     ws: null,
     threadId: null,
     threads: [],            // [{id, name, lastMessage}]
+    threadMessages: {},     // threadId → DocumentFragment (saved DOM nodes)
     connected: false,
     currentAssistantEl: null, // streaming target element
 };
@@ -410,22 +411,53 @@ function send() {
 // Thread management
 // -----------------------------------------------------------
 
+function saveCurrentMessages() {
+    if (!state.threadId) return;
+    var frag = document.createDocumentFragment();
+    while ($messages.firstChild) {
+        frag.appendChild($messages.firstChild);
+    }
+    state.threadMessages[state.threadId] = frag;
+}
+
+function restoreMessages(threadId) {
+    // Clear current DOM
+    while ($messages.firstChild) {
+        $messages.removeChild($messages.firstChild);
+    }
+    var saved = state.threadMessages[threadId];
+    if (saved) {
+        $messages.appendChild(saved);
+        // Fragment is now empty after appendChild, remove the key
+        delete state.threadMessages[threadId];
+        scrollToBottom();
+    }
+}
+
 function newThread(firstMessage) {
+    // Save current thread messages before switching
+    saveCurrentMessages();
     var id = generateId();
     var name = firstMessage ? firstMessage.slice(0, 40) : "New thread";
     state.threadId = id;
     state.currentAssistantEl = null;
     state.threads.unshift({ id: id, name: name, lastMessage: "" });
-    $messages.textContent = ""; // clear messages
+    // Clear messages for the new empty thread
+    while ($messages.firstChild) {
+        $messages.removeChild($messages.firstChild);
+    }
     renderThreads();
     $input.focus();
 }
 
 function switchThread(id) {
     if (state.threadId === id) return;
+    // Save current thread messages
+    saveCurrentMessages();
     state.threadId = id;
     state.currentAssistantEl = null;
-    $messages.textContent = ""; // clear messages (no history persistence yet)
+    // Restore target thread messages
+    restoreMessages(id);
     renderThreads();
     $input.focus();
 }
