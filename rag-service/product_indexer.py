@@ -124,6 +124,7 @@ class ProductIndexer:
         self,
         shopify_client,
         progress_callback: Optional[Callable] = None,
+        content_hash_store=None,
     ) -> ProductSyncJob:
         """Full catalog sync: fetch all products from Shopify, embed, store."""
         job = ProductSyncJob(
@@ -150,7 +151,7 @@ class ProductIndexer:
             batch_size = 20
             for i in range(0, len(products), batch_size):
                 batch = products[i:i + batch_size]
-                points = await self._process_product_batch(batch, shopify_client, job)
+                points, skipped = await self._process_product_batch(batch, shopify_client, job, content_hash_store)
 
                 if points:
                     loop = asyncio.get_event_loop()
@@ -162,7 +163,7 @@ class ProductIndexer:
                         )
                     )
                     job.chunks_indexed += len(points)
-                    job.log(f"Upserted {len(points)} chunks (total: {job.chunks_indexed})")
+                    job.log(f"Upserted {len(points)} chunks, skipped {skipped} (total: {job.chunks_indexed})")
 
                 if progress_callback:
                     progress_callback(job)
@@ -188,6 +189,7 @@ class ProductIndexer:
         shopify_client,
         since: str,
         progress_callback: Optional[Callable] = None,
+        content_hash_store=None,
     ) -> ProductSyncJob:
         """Incremental sync: only re-index products updated since `since`."""
         job = ProductSyncJob(
@@ -228,7 +230,7 @@ class ProductIndexer:
             batch_size = 20
             for i in range(0, len(products), batch_size):
                 batch = products[i:i + batch_size]
-                points = await self._process_product_batch(batch, shopify_client, job)
+                points, skipped = await self._process_product_batch(batch, shopify_client, job, content_hash_store)
 
                 if points:
                     loop = asyncio.get_event_loop()
@@ -264,12 +266,15 @@ class ProductIndexer:
         products: List[dict],
         shopify_client,
         job: ProductSyncJob,
-    ) -> List[PointStruct]:
-        """Process a batch of products: extract text, embed, build points."""
+        content_hash_store=None,
+    ) -> tuple:
+        """Process a batch of products: extract text, embed, build points. Returns (points, skipped_count)."""
         from sparse_encoder import encode_sparse
 
         texts = []
         metadatas = []
+        hash_items = []
+        skipped = 0
 
         for product in products:
             text = shopify_client.extract_product_text(product)
@@ -277,14 +282,23 @@ class ProductIndexer:
                 continue
 
             metadata = shopify_client.extract_metadata(product)
+
+            # Content hash dedup
+            item_key = f"product:{metadata.get('shopify_id', '')}"
+            if content_hash_store:
+                if not await content_hash_store.has_changed(item_key, text):
+                    skipped += 1
+                    continue
+
             texts.append(text)
             metadatas.append(metadata)
+            hash_items.append((item_key, text))
 
             job.current_product = metadata.get("title", "")
             job.products_indexed += 1
 
         if not texts:
-            return []
+            return [], skipped
 
         # Embed (dense + sparse)
         loop = asyncio.get_event_loop()
@@ -321,7 +335,12 @@ class ProductIndexer:
                 payload=payload,
             ))
 
-        return points
+        # Update content hashes after successful embedding
+        if content_hash_store:
+            for item_key, text in hash_items:
+                await content_hash_store.set_hash(item_key, text)
+
+        return points, skipped
 
     # ── Search ────────────────────────────────────────────────────
 
@@ -384,6 +403,7 @@ class ProductIndexer:
             return [
                 {
                     "title": r.payload.get("title", ""),
+                    "handle": r.payload.get("handle", ""),
                     "brand": r.payload.get("brand", ""),
                     "category": r.payload.get("category", ""),
                     "price": r.payload.get("price", 0),

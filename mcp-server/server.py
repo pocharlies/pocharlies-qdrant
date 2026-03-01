@@ -832,6 +832,126 @@ async def product_stats(
         return json.dumps({"error": f"Product stats failed: {str(e)[:300]}"})
 
 
+# ── 2b. Catalog Tools (collections, pages, unified search) ────────
+
+
+@mcp.tool()
+async def search_collections(
+    query: str,
+    ctx: Context[ServerSession, AppContext],
+    top_k: int = 5,
+) -> str:
+    """Search product collections by semantic query.
+    Returns collection titles, handles, product counts, and relevance scores."""
+
+    await ctx.info(f"Collection search: '{query}'...")
+    try:
+        data = await _pocharlies_post('/collections/search', {'query': query, 'top_k': top_k})
+        return json.dumps({
+            'query': query,
+            'total_results': len(data.get('results', [])),
+            'collections': data.get('results', []),
+        }, indent=2)
+    except httpx.ConnectError:
+        return json.dumps({'error': _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({'error': f'Collection search failed: {str(e)[:300]}'})
+
+
+@mcp.tool()
+async def get_collection_products(
+    id_or_handle: str,
+    ctx: Context[ServerSession, AppContext],
+    limit: int = 20,
+) -> str:
+    """List products in a specific collection. Accepts Shopify GID or collection handle (URL slug)."""
+
+    await ctx.info(f"Getting products for collection: {id_or_handle}...")
+    try:
+        data = await _pocharlies_get(f'/collections/{id_or_handle}/products', params={'limit': limit})
+        return json.dumps({
+            'collection': id_or_handle,
+            'total_products': data.get('total_products', 0),
+            'products': data.get('products', []),
+        }, indent=2)
+    except httpx.ConnectError:
+        return json.dumps({'error': _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({'error': f'Collection products lookup failed: {str(e)[:300]}'})
+
+
+@mcp.tool()
+async def get_product(
+    id_or_handle: str,
+    ctx: Context[ServerSession, AppContext],
+) -> str:
+    """Get full product details. Accepts Shopify GID or product handle (URL slug).
+    Returns title, description, price, variants, inventory, images, and metadata."""
+
+    await ctx.info(f"Getting product: {id_or_handle}...")
+    try:
+        data = await _pocharlies_get(f'/products/{id_or_handle}')
+        return json.dumps(data, indent=2)
+    except httpx.ConnectError:
+        return json.dumps({'error': _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({'error': f'Product lookup failed: {str(e)[:300]}'})
+
+
+@mcp.tool()
+async def get_inventory(
+    product_id_or_sku: str,
+    ctx: Context[ServerSession, AppContext],
+) -> str:
+    """Check inventory/stock levels for a product. Accepts product GID, handle, or SKU.
+    Returns stock quantity and availability status."""
+
+    await ctx.info(f"Checking inventory for: {product_id_or_sku}...")
+    try:
+        data = await _pocharlies_get(f'/products/{product_id_or_sku}/inventory')
+        return json.dumps(data, indent=2)
+    except httpx.ConnectError:
+        return json.dumps({'error': _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({'error': f'Inventory lookup failed: {str(e)[:300]}'})
+
+
+@mcp.tool()
+async def search_catalog(
+    query: str,
+    ctx: Context[ServerSession, AppContext],
+    top_k: int = 10,
+    types: Optional[str] = None,
+    brand: Optional[str] = None,
+    category: Optional[str] = None,
+) -> str:
+    """Unified search across all catalog content: products, collections, and pages.
+    types: comma-separated list like 'product,collection,page'. Default: all types.
+    Supports brand and category filters (for products)."""
+
+    await ctx.info(f"Catalog search: '{query}'...")
+    try:
+        payload = {'query': query, 'top_k': top_k}
+        if types:
+            payload['types'] = [t.strip() for t in types.split(',')]
+        if brand:
+            payload['brand'] = brand
+        if category:
+            payload['category'] = category
+
+        data = await _pocharlies_post('/catalog/search', payload)
+        return json.dumps({
+            'query': query,
+            'types': types or 'all',
+            'total_results': len(data.get('results', [])),
+            'results': data.get('results', []),
+        }, indent=2)
+    except httpx.ConnectError:
+        return json.dumps({'error': _connect_error_msg()})
+    except Exception as e:
+        return json.dumps({'error': f'Catalog search failed: {str(e)[:300]}'})
+
+
 # ── 3. Web Content Search ─────────────────────────────────────────
 
 

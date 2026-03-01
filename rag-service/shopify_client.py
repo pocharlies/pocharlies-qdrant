@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class ShopifyClient:
     """Client for Shopify Admin REST API (2024-01 version)."""
 
-    API_VERSION = "2024-01"
+    API_VERSION = "2025-01"
 
     def __init__(self, shop_domain: str, access_token: str):
         self.shop_domain = shop_domain
@@ -26,6 +26,15 @@ class ShopifyClient:
             "X-Shopify-Access-Token": access_token,
             "Content-Type": "application/json",
         }
+        self._graphql = None
+
+    @property
+    def graphql(self):
+        """Lazy-init GraphQL client for bulk operations and single-item fetches."""
+        if self._graphql is None:
+            from shopify_graphql import ShopifyGraphQL
+            self._graphql = ShopifyGraphQL(self.shop_domain, self.headers["X-Shopify-Access-Token"])
+        return self._graphql
 
     async def get_product_count(self) -> int:
         """Get total product count."""
@@ -185,11 +194,82 @@ class ShopifyClient:
             "status": product.get("status", "active"),
         }
 
+        # Metafields (from GraphQL flattened format)
+        metafields = product.get("metafields")
+        if isinstance(metafields, dict):
+            metadata["metafields"] = metafields
+
+        # Collection IDs (from GraphQL)
+        collection_ids = product.get("collection_ids")
+        if collection_ids:
+            metadata["collection_ids"] = collection_ids
+
+        # SEO (from GraphQL)
+        if product.get("seo_title"):
+            metadata["seo_title"] = product["seo_title"]
+        if product.get("seo_description"):
+            metadata["seo_description"] = product["seo_description"]
+
         # Parse airsoft-specific specs
         specs = self.parse_airsoft_specs(product)
         metadata.update(specs)
 
         return metadata
+
+    def extract_collection_text(self, collection: dict) -> str:
+        """Combine collection fields into embeddable text."""
+        parts = []
+        title = collection.get("title", "")
+        if title:
+            parts.append(title)
+        body_html = collection.get("body_html", "")
+        if body_html:
+            soup = BeautifulSoup(body_html, "html.parser")
+            body_text = soup.get_text(separator=" ", strip=True)
+            if body_text:
+                parts.append(body_text)
+        seo_desc = collection.get("seo_description", "")
+        if seo_desc:
+            parts.append(seo_desc)
+        return "\n".join(parts)
+
+    def extract_collection_metadata(self, collection: dict) -> dict:
+        """Extract structured metadata from a collection."""
+        handle = collection.get("handle", "")
+        return {
+            "shopify_id": collection.get("id"),
+            "title": collection.get("title", ""),
+            "handle": handle,
+            "url": f"https://{self.shop_domain}/collections/{handle}" if handle else "",
+            "image_url": collection.get("image_url", ""),
+            "products_count": collection.get("products_count", 0),
+            "updated_at": collection.get("updated_at", ""),
+            "seo_title": collection.get("seo_title", ""),
+            "seo_description": collection.get("seo_description", ""),
+        }
+
+    def extract_page_text(self, page: dict) -> str:
+        """Combine page fields into embeddable text."""
+        parts = []
+        title = page.get("title", "")
+        if title:
+            parts.append(title)
+        body = page.get("body_summary", "")
+        if body:
+            parts.append(body)
+        return "\n".join(parts)
+
+    def extract_page_metadata(self, page: dict) -> dict:
+        """Extract structured metadata from a page."""
+        handle = page.get("handle", "")
+        return {
+            "shopify_id": page.get("id"),
+            "title": page.get("title", ""),
+            "handle": handle,
+            "url": f"https://{self.shop_domain}/pages/{handle}" if handle else "",
+            "created_at": page.get("created_at", ""),
+            "updated_at": page.get("updated_at", ""),
+        }
 
     def parse_airsoft_specs(self, product: dict) -> dict:
         """Regex-based extraction of airsoft specs from product text.

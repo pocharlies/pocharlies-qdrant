@@ -9,7 +9,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -31,6 +31,10 @@ from product_classifier import ProductClassifier, ClassificationJob
 from translator import TranslationPipeline, TranslationJob, GlossaryStore
 from glossary_data import GLOSSARY, SUPPORTED_LANGUAGES, get_glossary_for_pair
 from shopify_client import ShopifyClient
+from shopify_graphql import ShopifyGraphQL
+from catalog_indexer import CatalogIndexer
+from sync_state import SyncStateStore, ContentHashStore
+from webhook_handler import ShopifyWebhookHandler
 from reranker import get_reranker, init_reranker
 
 logging.basicConfig(level=logging.INFO)
@@ -47,15 +51,21 @@ SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 
 # Global instances
 web_indexer: WebIndexer = None
 competitor_indexer: WebIndexer = None
 product_indexer: ProductIndexer = None
+catalog_indexer: CatalogIndexer = None
 product_classifier: ProductClassifier = None
 translator: TranslationPipeline = None
 glossary_store: GlossaryStore = None
 shopify_client: ShopifyClient = None
+shopify_graphql_client: ShopifyGraphQL = None
+webhook_handler: ShopifyWebhookHandler = None
+sync_state_store: SyncStateStore = None
+content_hash_store: ContentHashStore = None
 llm_client: OpenAI = None
 llm_model_id: str = None  # auto-discovered at startup
 rag_agent = None  # Agent SDK instance, created at startup
@@ -83,8 +93,9 @@ agent_tasks: Dict[str, AgentTask] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global web_indexer, competitor_indexer, llm_client, llm_model_id
-    global product_indexer, product_classifier, translator
-    global shopify_client, rag_agent
+    global product_indexer, catalog_indexer, product_classifier, translator
+    global shopify_client, shopify_graphql_client, webhook_handler
+    global sync_state_store, content_hash_store, rag_agent
     global redis_client, session_store, glossary_store
 
     logger.info("Initializing RAG service components...")
@@ -105,6 +116,11 @@ async def lifespan(app: FastAPI):
         collection_name="competitor_products",
     )
     product_indexer = ProductIndexer(
+        qdrant_url=QDRANT_URL,
+        qdrant_api_key=QDRANT_API_KEY,
+        model=embedding_model,
+    )
+    catalog_indexer = CatalogIndexer(
         qdrant_url=QDRANT_URL,
         qdrant_api_key=QDRANT_API_KEY,
         model=embedding_model,
@@ -133,6 +149,7 @@ async def lifespan(app: FastAPI):
             shop_domain=SHOPIFY_SHOP_DOMAIN,
             access_token=SHOPIFY_ACCESS_TOKEN,
         )
+        shopify_graphql_client = shopify_client.graphql
         logger.info(f"Shopify client configured for {SHOPIFY_SHOP_DOMAIN}")
 
     # Product classifier + translator (use LLM)
@@ -162,12 +179,33 @@ async def lifespan(app: FastAPI):
         redis_client = None
         session_store = None
 
+    # Sync state + content hash dedup (Redis-backed)
+    if redis_client:
+        sync_state_store = SyncStateStore(redis_client)
+        content_hash_store = ContentHashStore(redis_client)
+        logger.info("Sync state + content hash stores initialized")
+
+    # Webhook handler
+    if shopify_client and SHOPIFY_WEBHOOK_SECRET:
+        webhook_handler = ShopifyWebhookHandler(
+            webhook_secret=SHOPIFY_WEBHOOK_SECRET,
+            shopify_graphql=shopify_graphql_client,
+            product_indexer=product_indexer,
+            catalog_indexer=catalog_indexer,
+            shopify_client=shopify_client,
+            content_hash_store=content_hash_store,
+        )
+        logger.info("Shopify webhook handler configured")
+
     # Translation glossary (Redis-backed for custom terms, multi-language)
     glossary_store = GlossaryStore(redis=redis_client)
     if redis_client:
         custom_count = await glossary_store.load_all_pairs()
         logger.info(f"Glossary loaded: {len(GLOSSARY)} built-in terms × {len(SUPPORTED_LANGUAGES)} languages + {custom_count} custom entries")
-    translator = TranslationPipeline(llm_client=llm_client, glossary_store=glossary_store, model_id=llm_model_id)
+    # TRANSLATE_MODEL env var takes priority over auto-discovered model
+    translate_model_id = os.environ.get("TRANSLATE_MODEL") or llm_model_id
+    logger.info(f"Translation model: {translate_model_id} (env={'TRANSLATE_MODEL' if os.environ.get('TRANSLATE_MODEL') else 'auto-discovered'})")
+    translator = TranslationPipeline(llm_client=llm_client, glossary_store=glossary_store, model_id=translate_model_id)
 
     # Pre-load BM25 sparse encoder so first search is fast
     try:
@@ -448,7 +486,7 @@ When answering:
             prod_results = product_indexer.search(query=request.query, top_k=5)
             if prod_results:
                 prod_block = "\n".join([
-                    f"- **{r.get('title', 'Unknown')}** | Price: {r.get('price', 'N/A')} | Brand: {r.get('brand', 'N/A')} | {r.get('text', '')[:200]}"
+                    f"- **{r.get('title', 'Unknown')}** | Handle: `{r.get('handle', '')}` | Price: {r.get('price', 'N/A')} | Brand: {r.get('brand', 'N/A')} | {r.get('text', '')[:200]}"
                     for r in prod_results
                 ])
                 context_sections.append(f"## Product Catalog Results\n{prod_block}")
@@ -500,13 +538,18 @@ When answering:
     logger.info(f"Chat: query='{request.query[:60]}', model={model}, context={context_len} chars, has_rag={has_context}")
 
     try:
+        # GPT-5.x reasoning models require max_completion_tokens instead of max_tokens
+        is_reasoning_model = "gpt-5" in model.lower() or "o1" in model.lower() or "o3" in model.lower()
+        token_param = "max_completion_tokens" if is_reasoning_model else "max_tokens"
+
         call_kwargs = {
             "model": model,
             "messages": messages,
-            "max_tokens": request.max_tokens,
-            "temperature": 0.2,
+            token_param: request.max_tokens,
             "user": "rag:chat",
         }
+        if not is_reasoning_model:
+            call_kwargs["temperature"] = 0.2
 
         response = llm_client.chat.completions.create(**call_kwargs)
 
@@ -947,11 +990,15 @@ async def product_sync(request: ProductSyncRequest):
         try:
             if request.sync_type == "incremental" and request.since:
                 job = await product_indexer.incremental_sync(
-                    shopify_client, request.since, progress_callback=progress_cb
+                    shopify_client, request.since,
+                    progress_callback=progress_cb,
+                    content_hash_store=content_hash_store,
                 )
             else:
                 job = await product_indexer.index_all_products(
-                    shopify_client, progress_callback=progress_cb
+                    shopify_client,
+                    progress_callback=progress_cb,
+                    content_hash_store=content_hash_store,
                 )
             product_sync_jobs[job.job_id] = job
         except Exception as e:
@@ -997,7 +1044,251 @@ async def product_search(request: ProductSearchRequest):
 @app.get("/products/stats")
 async def product_stats():
     """Get product catalog stats."""
-    return product_indexer.get_stats()
+    stats = product_indexer.get_stats()
+    if catalog_indexer:
+        stats["catalog"] = catalog_indexer.get_stats()
+    return stats
+
+
+# ── New Catalog Endpoints ─────────────────────────────────────
+
+
+class CollectionSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+class CatalogSearchRequest(BaseModel):
+    query: str
+    types: Optional[List[str]] = None  # ["product", "collection", "page"]
+    top_k: int = 10
+    brand: Optional[str] = None
+    category: Optional[str] = None
+
+
+class FullSyncRequest(BaseModel):
+    sync_type: str = "full"  # "full" | "incremental"
+
+
+@app.post("/collections/search")
+async def search_collections(request: CollectionSearchRequest):
+    """Semantic search on product collections."""
+    if not catalog_indexer:
+        raise HTTPException(status_code=500, detail="Catalog indexer not initialized")
+    results = catalog_indexer.search_collections(request.query, top_k=request.top_k)
+    return {"results": results, "query": request.query}
+
+
+@app.get("/collections/{id_or_handle}/products")
+async def get_collection_products(id_or_handle: str, limit: int = 20):
+    """List products belonging to a collection."""
+    if not catalog_indexer:
+        raise HTTPException(status_code=500, detail="Catalog indexer not initialized")
+    products = catalog_indexer.get_collection_products(product_indexer, id_or_handle, limit=limit)
+    return {"collection": id_or_handle, "total_products": len(products), "products": products}
+
+
+@app.get("/products/{id_or_handle}")
+async def get_product_detail(id_or_handle: str):
+    """Get full product detail by GID or handle."""
+    if not catalog_indexer:
+        raise HTTPException(status_code=500, detail="Catalog indexer not initialized")
+    product = catalog_indexer.get_product_by_id_or_handle(product_indexer, id_or_handle)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return product
+
+
+@app.get("/products/{id_or_handle}/inventory")
+async def get_product_inventory(id_or_handle: str):
+    """Get inventory/stock levels for a product."""
+    if not catalog_indexer:
+        raise HTTPException(status_code=500, detail="Catalog indexer not initialized")
+    inventory = catalog_indexer.get_inventory(product_indexer, id_or_handle)
+    if not inventory:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return inventory
+
+
+@app.post("/catalog/search")
+async def catalog_search(request: CatalogSearchRequest):
+    """Unified search across products, collections, and pages."""
+    types = request.types or ["product", "collection", "page"]
+    all_results = []
+
+    if "product" in types:
+        reranker = get_reranker()
+        effective_top_k = request.top_k * 4 if reranker else request.top_k
+        products = product_indexer.search(
+            query=request.query,
+            top_k=effective_top_k,
+            brand_filter=request.brand,
+            category_filter=request.category,
+        )
+        if reranker and products:
+            products = reranker.rerank(request.query, products, top_k=request.top_k)
+        all_results.extend(products)
+
+    if "collection" in types and catalog_indexer:
+        collections = catalog_indexer.search_collections(request.query, top_k=request.top_k)
+        all_results.extend(collections)
+
+    if "page" in types and catalog_indexer:
+        pages = catalog_indexer.search_pages(request.query, top_k=request.top_k)
+        all_results.extend(pages)
+
+    # Sort by score descending, take top_k
+    all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
+    all_results = all_results[:request.top_k]
+
+    return {"results": all_results, "query": request.query, "types": types}
+
+
+@app.get("/products/sync/history")
+async def sync_history():
+    """Get sync state history."""
+    if not sync_state_store:
+        return {"history": [], "message": "Redis not available"}
+    history = await sync_state_store.get_sync_history(limit=10)
+    return {"history": history}
+
+
+@app.post("/catalog/full-sync")
+async def catalog_full_sync(request: FullSyncRequest):
+    """Full catalog sync using GraphQL bulk operations: products -> collections -> pages."""
+    if not shopify_client:
+        raise HTTPException(status_code=400, detail="Shopify not configured")
+    if not shopify_graphql_client:
+        raise HTTPException(status_code=400, detail="GraphQL client not initialized")
+
+    sync_id = None
+    if sync_state_store:
+        sync_id = await sync_state_store.create_sync(request.sync_type)
+
+    async def _run_full_sync():
+        try:
+            gql = shopify_graphql_client
+            items_total = 0
+
+            if request.sync_type == "full":
+                # 1. Bulk products
+                logger.info("Starting bulk products export...")
+                op_id = await gql.start_products_bulk_query()
+                result = await gql.poll_until_complete(op_id)
+                if result.get("url"):
+                    raw_items = await gql.download_results(result["url"])
+                    products = [ShopifyGraphQL.flatten_graphql_product(item)
+                                for item in raw_items if item.get("id", "").startswith("gid://shopify/Product/")]
+                    if products:
+                        job = await product_indexer.index_all_products(
+                            shopify_client, content_hash_store=content_hash_store
+                        )
+                        items_total += job.products_indexed
+                    logger.info(f"Bulk products: {len(products)} items")
+
+                # 2. Bulk collections (Shopify allows one bulk op at a time)
+                logger.info("Starting bulk collections export...")
+                op_id = await gql.start_collections_bulk_query()
+                result = await gql.poll_until_complete(op_id)
+                if result.get("url"):
+                    raw_items = await gql.download_results(result["url"])
+                    collections = [ShopifyGraphQL.flatten_graphql_collection(item) for item in raw_items]
+                    if collections and catalog_indexer:
+                        stats = await catalog_indexer.index_collections(
+                            collections, shopify_client, content_hash_store
+                        )
+                        items_total += stats.get("indexed", 0)
+                    logger.info(f"Bulk collections: {len(collections)} items")
+
+                # 3. Bulk pages
+                logger.info("Starting bulk pages export...")
+                op_id = await gql.start_pages_bulk_query()
+                result = await gql.poll_until_complete(op_id)
+                if result.get("url"):
+                    raw_items = await gql.download_results(result["url"])
+                    pages = [ShopifyGraphQL.flatten_graphql_page(item) for item in raw_items]
+                    if pages and catalog_indexer:
+                        stats = await catalog_indexer.index_pages(
+                            pages, shopify_client, content_hash_store
+                        )
+                        items_total += stats.get("indexed", 0)
+                    logger.info(f"Bulk pages: {len(pages)} items")
+
+            else:
+                # Incremental: use cursor from last sync
+                since = None
+                if sync_state_store:
+                    since = await sync_state_store.get_last_cursor()
+                if not since:
+                    from datetime import timedelta
+                    since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+
+                products = await gql.fetch_products_updated_since(since)
+                if products:
+                    flat_products = [ShopifyGraphQL.flatten_graphql_product(p) for p in products]
+                    job = await product_indexer.incremental_sync(
+                        shopify_client, since, content_hash_store=content_hash_store,
+                    )
+                    items_total += job.products_indexed
+
+                collections = await gql.fetch_collections_updated_since(since)
+                if collections:
+                    flat_colls = [ShopifyGraphQL.flatten_graphql_collection(c) for c in collections]
+                    if catalog_indexer:
+                        stats = await catalog_indexer.index_collections(
+                            flat_colls, shopify_client, content_hash_store
+                        )
+                        items_total += stats.get("indexed", 0)
+
+            cursor = datetime.now(timezone.utc).isoformat()
+            if sync_state_store and sync_id:
+                await sync_state_store.complete_sync(sync_id, cursor=cursor)
+                await sync_state_store.update_sync(sync_id, items_processed=items_total)
+
+            logger.info(f"Catalog sync completed: {items_total} items")
+
+        except Exception as e:
+            logger.error(f"Catalog sync failed: {e}")
+            if sync_state_store and sync_id:
+                await sync_state_store.complete_sync(sync_id, error=str(e)[:500])
+
+    asyncio.create_task(_run_full_sync())
+    return {"sync_id": sync_id, "status": "running", "sync_type": request.sync_type}
+
+
+from fastapi import Request as FastAPIRequest
+
+
+@app.post("/webhooks/shopify")
+async def shopify_webhook_handler(request: FastAPIRequest):
+    """Receive and process Shopify webhooks."""
+    if not webhook_handler:
+        return {"error": "Webhook handler not configured"}, 503
+
+    raw_body = await request.body()
+    hmac_header = request.headers.get("x-shopify-hmac-sha256", "")
+    topic = request.headers.get("x-shopify-topic", "")
+    shop_domain = request.headers.get("x-shopify-shop-domain", "")
+
+    if not hmac_header or not topic:
+        raise HTTPException(status_code=400, detail="Missing Shopify headers")
+
+    if not webhook_handler.verify_hmac(raw_body, hmac_header):
+        logger.warning(f"Invalid webhook HMAC from {shop_domain}")
+        raise HTTPException(status_code=401, detail="Invalid HMAC")
+
+    # Respond immediately (Shopify expects 200 within 5s)
+    import json as _json
+    body = _json.loads(raw_body)
+
+    async def _process():
+        try:
+            await webhook_handler.handle(topic, shop_domain, body)
+        except Exception as e:
+            logger.error(f"Error processing webhook {topic}: {e}")
+
+    asyncio.create_task(_process())
+    return {"received": True}
 
 
 # ── Competitor Indexing Endpoints ─────────────────────────────
