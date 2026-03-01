@@ -8,7 +8,8 @@ Languages supported:
   es (Spanish), de (German), fr (French), it (Italian), pt (Portuguese),
   ru (Russian), pl (Polish), uk (Ukrainian), ro (Romanian), nl (Dutch),
   hr (Serbo-Croatian), tr (Turkish), hu (Hungarian), el (Greek),
-  cs (Czech), sv (Swedish), ca (Catalan), bg (Bulgarian), da (Danish)
+  cs (Czech), sv (Swedish), ca (Catalan), bg (Bulgarian), da (Danish),
+  zh (Chinese), ja (Japanese)
 """
 
 GLOSSARY = {
@@ -36,6 +37,7 @@ GLOSSARY = {
         "ca": "canó interior",
         "bg": "вътрешен ствол",
         "da": "indre løb",
+        "zh": "内管", "ja": "インナーバレル",
     },
     "outer barrel": {
         "es": "cañón exterior",
@@ -57,6 +59,7 @@ GLOSSARY = {
         "ca": "canó exterior",
         "bg": "външен ствол",
         "da": "ydre løb",
+        "zh": "外管", "ja": "アウターバレル",
     },
     "barrel": {
         "es": "cañón",
@@ -78,6 +81,7 @@ GLOSSARY = {
         "ca": "canó",
         "bg": "ствол",
         "da": "løb",
+        "zh": "枪管", "ja": "バレル",
     },
     "barrel extension": {
         "es": "extensión de cañón",
@@ -99,6 +103,7 @@ GLOSSARY = {
         "ca": "extensió de canó",
         "bg": "удължител на ствола",
         "da": "løbforlænger",
+        "zh": "枪管延长件", "ja": "バレルエクステンション",
     },
     "barrel length": {
         "es": "longitud de cañón",
@@ -120,6 +125,7 @@ GLOSSARY = {
         "ca": "longitud del canó",
         "bg": "дължина на ствола",
         "da": "løblængde",
+        "zh": "枪管长度", "ja": "バレル長",
     },
     "hop-up": {
         "es": "hop-up", "de": "Hop-Up", "fr": "hop-up", "it": "hop-up",
@@ -127,6 +133,7 @@ GLOSSARY = {
         "ro": "hop-up", "nl": "hop-up", "hr": "hop-up", "tr": "hop-up",
         "hu": "hop-up", "el": "hop-up", "cs": "hop-up", "sv": "hop-up",
         "ca": "hop-up", "bg": "хоп-ъп", "da": "hop-up",
+        "zh": "hop-up", "ja": "ホップアップ",
     },
     "hop-up chamber": {
         "es": "cámara de hop-up",
@@ -148,6 +155,7 @@ GLOSSARY = {
         "ca": "cambra de hop-up",
         "bg": "камера на хоп-ъп",
         "da": "hop-up kammer",
+        "zh": "hop-up座", "ja": "ホップアップチャンバー",
     },
     "hop-up bucking": {
         "es": "goma de hop-up",
@@ -169,6 +177,7 @@ GLOSSARY = {
         "ca": "goma de hop-up",
         "bg": "гумичка за хоп-ъп",
         "da": "hop-up gummi",
+        "zh": "hop-up胶皮", "ja": "ホップアップパッキン",
     },
     "hop-up nub": {
         "es": "nub de hop-up", "de": "Hop-Up-Nub", "fr": "nub de hop-up",
@@ -178,6 +187,7 @@ GLOSSARY = {
         "hu": "hop-up nub", "el": "nub hop-up", "cs": "hop-up nub",
         "sv": "hop-up-nub", "ca": "nub de hop-up", "bg": "наб за хоп-ъп",
         "da": "hop-up nub",
+        "zh": "hop-up压点", "ja": "ホップアップナブ",
     },
     "gearbox": {
         "es": "gearbox", "de": "Gearbox", "fr": "gearbox", "it": "gearbox",
@@ -185,6 +195,7 @@ GLOSSARY = {
         "ro": "gearbox", "nl": "gearbox", "hr": "gearbox", "tr": "gearbox",
         "hu": "gearbox", "el": "gearbox", "cs": "gearbox", "sv": "gearbox",
         "ca": "gearbox", "bg": "гиърбокс", "da": "gearbox",
+        "zh": "齿轮箱", "ja": "ギアボックス",
     },
     "gearbox shell": {
         "es": "carcasa de gearbox",
@@ -206,6 +217,7 @@ GLOSSARY = {
         "ca": "carcassa de gearbox",
         "bg": "корпус на гиърбокс",
         "da": "gearbox hus",
+        "zh": "齿轮箱壳体", "ja": "ギアボックスシェル",
     },
     "cylinder": {
         "es": "cilindro", "de": "Zylinder", "fr": "cylindre", "it": "cilindro",
@@ -213,6 +225,7 @@ GLOSSARY = {
         "ro": "cilindru", "nl": "cilinder", "hr": "cilindar", "tr": "silindir",
         "hu": "henger", "el": "κύλινδρος", "cs": "válec", "sv": "cylinder",
         "ca": "cilindre", "bg": "цилиндър", "da": "cylinder",
+        "zh": "气缸", "ja": "シリンダー",
     },
     "cylinder head": {
         "es": "cabeza de cilindro",
@@ -234,6 +247,7 @@ GLOSSARY = {
         "ca": "cap de cilindre",
         "bg": "глава на цилиндъра",
         "da": "cylinderhoved",
+        "zh": "气缸头", "ja": "シリンダーヘッド",
     },
     "piston": {
         "es": "pistón", "de": "Kolben", "fr": "piston", "it": "pistone",
@@ -241,6 +255,7 @@ GLOSSARY = {
         "ro": "piston", "nl": "zuiger", "hr": "klip", "tr": "piston",
         "hu": "dugattyú", "el": "έμβολο", "cs": "píst", "sv": "kolv",
         "ca": "pistó", "bg": "бутало", "da": "stempel",
+        "zh": "活塞", "ja": "ピストン",
     },
     "piston head": {
         "es": "cabeza de pistón",
@@ -262,6 +277,7 @@ GLOSSARY = {
         "ca": "cap de pistó",
         "bg": "глава на буталото",
         "da": "stempelhoved",
+        "zh": "活塞头", "ja": "ピストンヘッド",
     },
     "spring": {
         "es": "muelle", "de": "Feder", "fr": "ressort", "it": "molla",
@@ -269,6 +285,7 @@ GLOSSARY = {
         "ro": "arc", "nl": "veer", "hr": "opruga", "tr": "yay",
         "hu": "rugó", "el": "ελατήριο", "cs": "pružina", "sv": "fjäder",
         "ca": "molla", "bg": "пружина", "da": "fjeder",
+        "zh": "弹簧", "ja": "スプリング",
     },
     "spring guide": {
         "es": "guía de muelle",
@@ -290,6 +307,7 @@ GLOSSARY = {
         "ca": "guia de molla",
         "bg": "водач на пружина",
         "da": "fjederguide",
+        "zh": "弹簧导杆", "ja": "スプリングガイド",
     },
     "nozzle": {
         "es": "nozzle", "de": "Nozzle", "fr": "nozzle", "it": "nozzle",
@@ -297,6 +315,7 @@ GLOSSARY = {
         "ro": "nozzle", "nl": "nozzle", "hr": "nozzle", "tr": "nozzle",
         "hu": "nozzle", "el": "nozzle", "cs": "nozzle", "sv": "nozzle",
         "ca": "nozzle", "bg": "нозъл", "da": "nozzle",
+        "zh": "喷嘴", "ja": "ノズル",
     },
     "air nozzle": {
         "es": "nozzle de aire", "de": "Luftdüse", "fr": "nozzle d'air",
@@ -306,6 +325,7 @@ GLOSSARY = {
         "hu": "levegő fúvóka", "el": "ακροφύσιο αέρα", "cs": "vzduchová tryska",
         "sv": "luftmunstycke", "ca": "nozzle d'aire", "bg": "въздушна дюза",
         "da": "luftdyse",
+        "zh": "气嘴", "ja": "エアノズル",
     },
     "tappet plate": {
         "es": "tappet plate", "de": "Tappet Plate", "fr": "tappet plate",
@@ -315,6 +335,7 @@ GLOSSARY = {
         "hu": "tappet plate", "el": "tappet plate", "cs": "tappet plate",
         "sv": "tappet plate", "ca": "tappet plate", "bg": "тапет плейт",
         "da": "tappet plate",
+        "zh": "拨片", "ja": "タペットプレート",
     },
     "trigger": {
         "es": "gatillo", "de": "Abzug", "fr": "détente", "it": "grilletto",
@@ -322,6 +343,7 @@ GLOSSARY = {
         "ro": "trăgaci", "nl": "trekker", "hr": "okidač", "tr": "tetik",
         "hu": "ravasz", "el": "σκανδάλη", "cs": "spoušť", "sv": "avtryckare",
         "ca": "gallet", "bg": "спусък", "da": "aftrækkker",
+        "zh": "扳机", "ja": "トリガー",
     },
     "trigger unit": {
         "es": "unidad de gatillo",
@@ -343,6 +365,7 @@ GLOSSARY = {
         "ca": "unitat de gallet",
         "bg": "спусков механизъм",
         "da": "aftrækkerenhed",
+        "zh": "扳机组件", "ja": "トリガーユニット",
     },
     "trigger guard": {
         "es": "guardamonte", "de": "Abzugsbügel", "fr": "pontet",
@@ -352,6 +375,7 @@ GLOSSARY = {
         "hu": "elsütőbillentyű-kengyel", "el": "προφυλακτήρας σκανδάλης",
         "cs": "lučík spouště", "sv": "avtryckarskydd", "ca": "guardamunt",
         "bg": "спусков предпазител", "da": "aftrækkerbøjle",
+        "zh": "扳机护圈", "ja": "トリガーガード",
     },
     "selector plate": {
         "es": "selector de tiro", "de": "Selectorplatte", "fr": "sélecteur de tir",
@@ -361,6 +385,7 @@ GLOSSARY = {
         "hu": "szelektor lemez", "el": "πλάκα επιλογέα", "cs": "selectorová destička",
         "sv": "selektorplatta", "ca": "selector de tir", "bg": "селекторна пластина",
         "da": "selectorplade",
+        "zh": "快慢机板", "ja": "セレクタープレート",
     },
     "fire selector": {
         "es": "selector de tiro", "de": "Feuermodus-Wähler", "fr": "sélecteur de tir",
@@ -370,6 +395,7 @@ GLOSSARY = {
         "hu": "tűzváltó", "el": "επιλογέας πυρός", "cs": "přepínač palby",
         "sv": "eldväljare", "ca": "selector de foc", "bg": "превключвател на огъня",
         "da": "ildvælger",
+        "zh": "射击选择器", "ja": "セレクターレバー",
     },
     "safety": {
         "es": "seguro", "de": "Sicherung", "fr": "sécurité", "it": "sicura",
@@ -378,6 +404,7 @@ GLOSSARY = {
         "hr": "osigurač", "tr": "emniyet", "hu": "biztosíték",
         "el": "ασφάλεια", "cs": "pojistka", "sv": "säkring",
         "ca": "seguretat", "bg": "предпазител", "da": "sikring",
+        "zh": "保险", "ja": "セーフティ",
     },
     "safety lever": {
         "es": "palanca de seguro", "de": "Sicherungshebel", "fr": "levier de sécurité",
@@ -387,6 +414,7 @@ GLOSSARY = {
         "hu": "biztosítókar", "el": "μοχλός ασφαλείας", "cs": "páka pojistky",
         "sv": "säkringsspak", "ca": "palanca de seguretat", "bg": "лост на предпазителя",
         "da": "sikringsgreb",
+        "zh": "保险杆", "ja": "セーフティレバー",
     },
     "stock": {
         "es": "culata", "de": "Schaft", "fr": "crosse", "it": "calcio",
@@ -394,6 +422,7 @@ GLOSSARY = {
         "ro": "pat", "nl": "kolf", "hr": "kundak", "tr": "dipçik",
         "hu": "tus", "el": "κοντάκι", "cs": "pažba", "sv": "kolv",
         "ca": "culata", "bg": "приклад", "da": "kolbe",
+        "zh": "枪托", "ja": "ストック",
     },
     "folding stock": {
         "es": "culata plegable", "de": "Klappschaft", "fr": "crosse pliante",
@@ -403,6 +432,7 @@ GLOSSARY = {
         "hu": "összehajtható tus", "el": "αναδιπλούμενο κοντάκι", "cs": "sklopná pažba",
         "sv": "fällbar kolv", "ca": "culata plegable", "bg": "сгъваем приклад",
         "da": "foldbar kolbe",
+        "zh": "折叠枪托", "ja": "フォールディングストック",
     },
     "retractable stock": {
         "es": "culata retráctil", "de": "Schiebeschaft", "fr": "crosse rétractable",
@@ -412,6 +442,7 @@ GLOSSARY = {
         "hu": "behúzható tus", "el": "ανασυρόμενο κοντάκι", "cs": "zasouvací pažba",
         "sv": "utdragbar kolv", "ca": "culata retràctil", "bg": "прибиращ се приклад",
         "da": "udtrækkelig kolbe",
+        "zh": "伸缩枪托", "ja": "リトラクタブルストック",
     },
     "adjustable stock": {
         "es": "culata ajustable", "de": "verstellbarer Schaft", "fr": "crosse réglable",
@@ -421,6 +452,7 @@ GLOSSARY = {
         "hu": "állítható tus", "el": "ρυθμιζόμενο κοντάκι", "cs": "nastavitelná pažba",
         "sv": "justerbar kolv", "ca": "culata ajustable", "bg": "регулируем приклад",
         "da": "justerbar kolbe",
+        "zh": "可调枪托", "ja": "アジャスタブルストック",
     },
     "buffer tube": {
         "es": "tubo de culata", "de": "Pufferrohr", "fr": "tube de crosse",
@@ -430,6 +462,7 @@ GLOSSARY = {
         "hu": "puffercső", "el": "σωλήνας buffer", "cs": "buffer tube",
         "sv": "buffertrör", "ca": "tub de culata", "bg": "буферна тръба",
         "da": "bufferrør",
+        "zh": "缓冲管", "ja": "バッファーチューブ",
     },
     "handguard": {
         "es": "guardamanos", "de": "Handschutz", "fr": "garde-main",
@@ -439,6 +472,7 @@ GLOSSARY = {
         "hu": "kézvédő", "el": "χειροφυλακτήρας", "cs": "předpažbí",
         "sv": "handskydd", "ca": "guardamans", "bg": "ръкохватка",
         "da": "håndbeskytter",
+        "zh": "护木", "ja": "ハンドガード",
     },
     "rail": {
         "es": "riel", "de": "Schiene", "fr": "rail", "it": "slitta",
@@ -446,6 +480,7 @@ GLOSSARY = {
         "ro": "șină", "nl": "rail", "hr": "šina", "tr": "ray",
         "hu": "sín", "el": "ράγα", "cs": "lišta", "sv": "räls",
         "ca": "rail", "bg": "релса", "da": "skinne",
+        "zh": "导轨", "ja": "レール",
     },
     "rail system": {
         "es": "sistema de rieles", "de": "Schienensystem", "fr": "système de rails",
@@ -455,6 +490,7 @@ GLOSSARY = {
         "hu": "sínrendszer", "el": "σύστημα ράγας", "cs": "systém lišt",
         "sv": "rälssystem", "ca": "sistema de rails", "bg": "система от релси",
         "da": "skinnesystem",
+        "zh": "导轨系统", "ja": "レールシステム",
     },
     "picatinny rail": {
         "es": "riel Picatinny", "de": "Picatinny-Schiene", "fr": "rail Picatinny",
@@ -464,6 +500,7 @@ GLOSSARY = {
         "hu": "Picatinny sín", "el": "ράγα Picatinny", "cs": "Picatinny lišta",
         "sv": "Picatinny-räls", "ca": "rail Picatinny", "bg": "Picatinny релса",
         "da": "Picatinny-skinne",
+        "zh": "皮卡汀尼导轨", "ja": "ピカティニーレール",
     },
     "upper receiver": {
         "es": "cuerpo superior", "de": "Oberteil", "fr": "partie supérieure",
@@ -473,6 +510,7 @@ GLOSSARY = {
         "hu": "felső tok", "el": "άνω δέκτης", "cs": "horní tělo",
         "sv": "övre kropp", "ca": "cos superior", "bg": "горен корпус",
         "da": "overkrop",
+        "zh": "上机匣", "ja": "アッパーレシーバー",
     },
     "lower receiver": {
         "es": "cuerpo inferior", "de": "Unterteil", "fr": "partie inférieure",
@@ -482,6 +520,7 @@ GLOSSARY = {
         "hu": "alsó tok", "el": "κάτω δέκτης", "cs": "dolní tělo",
         "sv": "nedre kropp", "ca": "cos inferior", "bg": "долен корпус",
         "da": "underkrop",
+        "zh": "下机匣", "ja": "ロワーレシーバー",
     },
     "receiver": {
         "es": "cuerpo", "de": "Gehäuse", "fr": "corps", "it": "corpo",
@@ -489,6 +528,7 @@ GLOSSARY = {
         "ro": "receptor", "nl": "lichaam", "hr": "prijemnik", "tr": "gövde",
         "hu": "tok", "el": "δέκτης", "cs": "tělo", "sv": "kropp",
         "ca": "cos", "bg": "корпус", "da": "krop",
+        "zh": "机匣", "ja": "レシーバー",
     },
     "bolt": {
         "es": "cerrojo", "de": "Verschluss", "fr": "culasse", "it": "otturatore",
@@ -496,6 +536,7 @@ GLOSSARY = {
         "ro": "închizător", "nl": "grendel", "hr": "zatvarač", "tr": "sürgü",
         "hu": "zár", "el": "κλείστρο", "cs": "závěr", "sv": "slutstycke",
         "ca": "forrellat", "bg": "затвор", "da": "bolt",
+        "zh": "枪栓", "ja": "ボルト",
     },
     "charging handle": {
         "es": "manija de carga", "de": "Ladegriff", "fr": "levier d'armement",
@@ -506,6 +547,7 @@ GLOSSARY = {
         "hu": "felhúzókar", "el": "μοχλός οπλισμού", "cs": "natažení závěru",
         "sv": "laddhandtag", "ca": "maneta de càrrega", "bg": "ръкохватка за зареждане",
         "da": "ladegreb",
+        "zh": "拉机柄", "ja": "チャージングハンドル",
     },
     "flash hider": {
         "es": "apagallamas", "de": "Mündungsfeuerdämpfer", "fr": "cache-flamme",
@@ -515,6 +557,7 @@ GLOSSARY = {
         "hu": "lángrejtő", "el": "κρύπτης φλόγας", "cs": "tlumič plamene",
         "sv": "flamdämpare", "ca": "paraflames", "bg": "пламегасител",
         "da": "flammeskjuler",
+        "zh": "消焰器", "ja": "フラッシュハイダー",
     },
     "muzzle brake": {
         "es": "freno de boca", "de": "Mündungsbremse", "fr": "frein de bouche",
@@ -524,6 +567,7 @@ GLOSSARY = {
         "hu": "csőszájfék", "el": "φρένο στομίου", "cs": "úsťová brzda",
         "sv": "mynningsbroms", "ca": "fre de boca", "bg": "дулен спирач",
         "da": "mundingsbremse",
+        "zh": "枪口制退器", "ja": "マズルブレーキ",
     },
     "suppressor": {
         "es": "silenciador", "de": "Schalldämpfer", "fr": "silencieux",
@@ -533,6 +577,7 @@ GLOSSARY = {
         "hu": "hangtompító", "el": "σιγαστήρας", "cs": "tlumič",
         "sv": "ljuddämpare", "ca": "silenciador", "bg": "заглушител",
         "da": "lyddæmper",
+        "zh": "消音器", "ja": "サプレッサー",
     },
     "silencer": {
         "es": "silenciador", "de": "Schalldämpfer", "fr": "silencieux",
@@ -542,6 +587,7 @@ GLOSSARY = {
         "hu": "hangtompító", "el": "σιγαστήρας", "cs": "tlumič",
         "sv": "ljuddämpare", "ca": "silenciador", "bg": "заглушител",
         "da": "lyddæmper",
+        "zh": "消音器", "ja": "サイレンサー",
     },
     "tracer unit": {
         "es": "unidad trazadora", "de": "Tracer-Einheit", "fr": "unité tracer",
@@ -551,6 +597,7 @@ GLOSSARY = {
         "hu": "tracer egység", "el": "μονάδα tracer", "cs": "tracer jednotka",
         "sv": "tracerenhet", "ca": "unitat tracer", "bg": "трасиращо устройство",
         "da": "tracerenhed",
+        "zh": "曳光器", "ja": "トレーサーユニット",
     },
     "grip": {
         "es": "empuñadura", "de": "Griff", "fr": "poignée", "it": "impugnatura",
@@ -558,6 +605,7 @@ GLOSSARY = {
         "ro": "mâner", "nl": "greep", "hr": "rukohvat", "tr": "kabza",
         "hu": "markolat", "el": "λαβή", "cs": "rukojeť", "sv": "grepp",
         "ca": "empunyadura", "bg": "ръкохватка", "da": "greb",
+        "zh": "握把", "ja": "グリップ",
     },
     "pistol grip": {
         "es": "empuñadura de pistola", "de": "Pistolengriff", "fr": "poignée pistolet",
@@ -568,6 +616,7 @@ GLOSSARY = {
         "hu": "pisztolymarkolat", "el": "λαβή πιστολιού", "cs": "pistolová rukojeť",
         "sv": "pistolgrepp", "ca": "empunyadura de pistola", "bg": "пистолетна ръкохватка",
         "da": "pistolgreb",
+        "zh": "手枪握把", "ja": "ピストルグリップ",
     },
     "foregrip": {
         "es": "empuñadura delantera", "de": "Vordergriff", "fr": "poignée avant",
@@ -578,6 +627,7 @@ GLOSSARY = {
         "hu": "előmarkolat", "el": "εμπρόσθια λαβή", "cs": "přední rukojeť",
         "sv": "framgrepp", "ca": "empunyadura davantera", "bg": "предна ръкохватка",
         "da": "frontgreb",
+        "zh": "前握把", "ja": "フォアグリップ",
     },
     "magazine": {
         "es": "cargador", "de": "Magazin", "fr": "chargeur", "it": "caricatore",
@@ -585,6 +635,7 @@ GLOSSARY = {
         "ro": "încărcător", "nl": "magazijn", "hr": "spremnik", "tr": "şarjör",
         "hu": "tár", "el": "γεμιστήρας", "cs": "zásobník", "sv": "magasin",
         "ca": "carregador", "bg": "пълнител", "da": "magasin",
+        "zh": "弹匣", "ja": "マガジン",
     },
     "mag": {
         "es": "cargador", "de": "Magazin", "fr": "chargeur", "it": "caricatore",
@@ -592,6 +643,7 @@ GLOSSARY = {
         "ro": "încărcător", "nl": "magazijn", "hr": "spremnik", "tr": "şarjör",
         "hu": "tár", "el": "γεμιστήρας", "cs": "zásobník", "sv": "magasin",
         "ca": "carregador", "bg": "пълнител", "da": "magasin",
+        "zh": "弹匣", "ja": "マグ",
     },
     "mid-cap magazine": {
         "es": "cargador mid-cap", "de": "Mid-Cap Magazin", "fr": "chargeur mid-cap",
@@ -601,6 +653,7 @@ GLOSSARY = {
         "hu": "mid-cap tár", "el": "γεμιστήρας mid-cap", "cs": "mid-cap zásobník",
         "sv": "mid-cap magasin", "ca": "carregador mid-cap", "bg": "mid-cap пълнител",
         "da": "mid-cap magasin",
+        "zh": "中容量弹匣", "ja": "ミッドキャップマガジン",
     },
     "hi-cap magazine": {
         "es": "cargador hi-cap", "de": "Hi-Cap Magazin", "fr": "chargeur hi-cap",
@@ -610,6 +663,7 @@ GLOSSARY = {
         "hu": "hi-cap tár", "el": "γεμιστήρας hi-cap", "cs": "hi-cap zásobník",
         "sv": "hi-cap magasin", "ca": "carregador hi-cap", "bg": "hi-cap пълнител",
         "da": "hi-cap magasin",
+        "zh": "大容量弹匣", "ja": "多弾マガジン",
     },
     "drum magazine": {
         "es": "cargador de tambor", "de": "Trommelmagazin", "fr": "chargeur tambour",
@@ -619,6 +673,7 @@ GLOSSARY = {
         "hu": "dobtár", "el": "τυμπανοειδής γεμιστήρας", "cs": "bubnový zásobník",
         "sv": "trummagasin", "ca": "carregador de tambor", "bg": "барабанен пълнител",
         "da": "tromlemagasin",
+        "zh": "弹鼓", "ja": "ドラムマガジン",
     },
     "mag release": {
         "es": "liberador de cargador", "de": "Magazinauslöser", "fr": "largueur de chargeur",
@@ -629,6 +684,7 @@ GLOSSARY = {
         "hu": "tárkireteszelő", "el": "απελευθέρωση γεμιστήρα", "cs": "pojistka zásobníku",
         "sv": "magasinfrigöring", "ca": "alliberador de carregador", "bg": "бутон за освобождаване на пълнителя",
         "da": "magasinudløser",
+        "zh": "弹匣释放钮", "ja": "マグリリース",
     },
     "speed loader": {
         "es": "cargador rápido", "de": "Speedloader", "fr": "speed loader",
@@ -638,6 +694,7 @@ GLOSSARY = {
         "hu": "speed loader", "el": "speed loader", "cs": "speed loader",
         "sv": "speed loader", "ca": "carregador ràpid", "bg": "спийдлоудър",
         "da": "speed loader",
+        "zh": "快速装弹器", "ja": "スピードローダー",
     },
     "bolt": {
         "es": "cerrojo", "de": "Verschluss", "fr": "culasse", "it": "otturatore",
@@ -645,6 +702,7 @@ GLOSSARY = {
         "ro": "închizător", "nl": "grendel", "hr": "zatvarač", "tr": "sürgü",
         "hu": "zár", "el": "κλείστρο", "cs": "závěr", "sv": "slutstycke",
         "ca": "forrellat", "bg": "затвор", "da": "bundstykke",
+        "zh": "枪栓", "ja": "ボルト",
     },
     "buffer": {
         "es": "buffer", "de": "Puffer", "fr": "tampon", "it": "buffer",
@@ -652,6 +710,7 @@ GLOSSARY = {
         "ro": "buffer", "nl": "buffer", "hr": "odbojnik", "tr": "tampon",
         "hu": "ütköző", "el": "ρυθμιστής", "cs": "buffer", "sv": "buffert",
         "ca": "buffer", "bg": "буфер", "da": "buffer",
+        "zh": "缓冲器", "ja": "バッファー",
     },
     "sling": {
         "es": "correa", "de": "Tragegurt", "fr": "bretelle", "it": "cinghia",
@@ -659,6 +718,7 @@ GLOSSARY = {
         "ro": "curea", "nl": "draagriem", "hr": "remen", "tr": "askı kayışı",
         "hu": "hordszíj", "el": "αορτήρας", "cs": "popruh", "sv": "vapenrem",
         "ca": "corretja", "bg": "каишка", "da": "bærerem",
+        "zh": "枪带", "ja": "スリング",
     },
     "bipod": {
         "es": "bípode", "de": "Zweibein", "fr": "bipied", "it": "bipiede",
@@ -666,6 +726,7 @@ GLOSSARY = {
         "ro": "bipod", "nl": "bipod", "hr": "dvonožac", "tr": "bipod",
         "hu": "kétlábú", "el": "δίποδο", "cs": "dvojnožka", "sv": "tvåfot",
         "ca": "bípode", "bg": "двуножник", "da": "bipod",
+        "zh": "两脚架", "ja": "バイポッド",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -680,6 +741,7 @@ GLOSSARY = {
         "hu": "airsoft fegyver", "el": "airsoft όπλο", "cs": "airsoftová zbraň",
         "sv": "airsoftvapen", "ca": "rèplica d'airsoft", "bg": "еърсофт оръжие",
         "da": "airsoft våben",
+        "zh": "气枪", "ja": "エアソフトガン",
     },
     "airsoft rifle": {
         "es": "réplica de airsoft tipo rifle", "de": "Airsoft-Gewehr", "fr": "fusil airsoft",
@@ -689,6 +751,7 @@ GLOSSARY = {
         "hu": "airsoft puska", "el": "airsoft τυφέκιο", "cs": "airsoftová puška",
         "sv": "airsoftgevär", "ca": "fusell d'airsoft", "bg": "еърсофт пушка",
         "da": "airsoft riffel",
+        "zh": "气动步枪", "ja": "エアソフトライフル",
     },
     "airsoft pistol": {
         "es": "pistola de airsoft", "de": "Airsoft-Pistole", "fr": "pistolet airsoft",
@@ -698,6 +761,7 @@ GLOSSARY = {
         "hu": "airsoft pisztoly", "el": "airsoft πιστόλι", "cs": "airsoftová pistole",
         "sv": "airsoftpistol", "ca": "pistola d'airsoft", "bg": "еърсофт пистолет",
         "da": "airsoft pistol",
+        "zh": "气动手枪", "ja": "エアソフトピストル",
     },
     "replica": {
         "es": "réplica", "de": "Replik", "fr": "réplique", "it": "replica",
@@ -705,6 +769,7 @@ GLOSSARY = {
         "ro": "replică", "nl": "replica", "hr": "replika", "tr": "replika",
         "hu": "replika", "el": "ρέπλικα", "cs": "replika", "sv": "replika",
         "ca": "rèplica", "bg": "реплика", "da": "replika",
+        "zh": "复刻枪", "ja": "レプリカ",
     },
     "AEG": {
         "es": "AEG (fusil eléctrico automático)", "de": "AEG (Automatik-Elektro-Gewehr)",
@@ -717,6 +782,7 @@ GLOSSARY = {
         "cs": "AEG (automatická elektrická zbraň)", "sv": "AEG (automatiskt elgevär)",
         "ca": "AEG (fusell elèctric automàtic)", "bg": "AEG (автоматичен електрически привод)",
         "da": "AEG (automatisk elektrisk gevær)",
+        "zh": "电动枪", "ja": "電動ガン",
     },
     "GBB": {
         "es": "GBB (gas blowback)", "de": "GBB (Gas Blowback)", "fr": "GBB (gas blowback)",
@@ -726,6 +792,7 @@ GLOSSARY = {
         "hu": "GBB (gas blowback)", "el": "GBB (gas blowback)", "cs": "GBB (gas blowback)",
         "sv": "GBB (gas blowback)", "ca": "GBB (gas blowback)", "bg": "GBB (газов блоубек)",
         "da": "GBB (gas blowback)",
+        "zh": "气吹回膛", "ja": "ガスブローバック",
     },
     "gas blowback": {
         "es": "gas blowback", "de": "Gas Blowback", "fr": "gas blowback",
@@ -735,6 +802,7 @@ GLOSSARY = {
         "hu": "gas blowback", "el": "gas blowback", "cs": "gas blowback",
         "sv": "gas blowback", "ca": "gas blowback", "bg": "газов блоубек",
         "da": "gas blowback",
+        "zh": "气动回膛", "ja": "ガスブローバック",
     },
     "bolt action": {
         "es": "cerrojo", "de": "Repetiergewehr", "fr": "à verrou",
@@ -745,6 +813,7 @@ GLOSSARY = {
         "hu": "tolózáras", "el": "μοχλοκίνητο", "cs": "opakovací závěr",
         "sv": "cylindermekanism", "ca": "forrellat", "bg": "болтово действие",
         "da": "boltmekanisme",
+        "zh": "栓动式", "ja": "ボルトアクション",
     },
     "sniper rifle": {
         "es": "rifle de francotirador", "de": "Scharfschützengewehr", "fr": "fusil de précision",
@@ -754,6 +823,7 @@ GLOSSARY = {
         "hu": "mesterlövész puska", "el": "τυφέκιο ελεύθερου σκοπευτή", "cs": "odstřelovací puška",
         "sv": "prickskyttegevär", "ca": "fusell de franctirador", "bg": "снайперска пушка",
         "da": "sniperriffel",
+        "zh": "狙击步枪", "ja": "スナイパーライフル",
     },
     "submachine gun": {
         "es": "subfusil", "de": "Maschinenpistole", "fr": "pistolet-mitrailleur",
@@ -763,6 +833,7 @@ GLOSSARY = {
         "hu": "géppisztoly", "el": "υποπολυβόλο", "cs": "samopal",
         "sv": "kulsprutepistol", "ca": "subfusell", "bg": "пистолет-картечница",
         "da": "maskinpistol",
+        "zh": "冲锋枪", "ja": "サブマシンガン",
     },
     "shotgun": {
         "es": "escopeta", "de": "Schrotflinte", "fr": "fusil à pompe",
@@ -772,6 +843,7 @@ GLOSSARY = {
         "hu": "sörétes puska", "el": "κυνηγετικό όπλο", "cs": "brokovnice",
         "sv": "hagelgevär", "ca": "escopeta", "bg": "пушка-помпа",
         "da": "haglgevær",
+        "zh": "霰弹枪", "ja": "ショットガン",
     },
     "grenade launcher": {
         "es": "lanzagranadas", "de": "Granatwerfer", "fr": "lance-grenades",
@@ -781,6 +853,7 @@ GLOSSARY = {
         "hu": "gránátvető", "el": "εκτοξευτής χειροβομβίδων", "cs": "granátomet",
         "sv": "granatkastare", "ca": "llançagranades", "bg": "гранатомет",
         "da": "granatkaster",
+        "zh": "榴弹发射器", "ja": "グレネードランチャー",
     },
     "carbine": {
         "es": "carabina", "de": "Karabiner", "fr": "carabine", "it": "carabina",
@@ -788,6 +861,7 @@ GLOSSARY = {
         "ro": "carabină", "nl": "karabijn", "hr": "karabinka", "tr": "karabina",
         "hu": "karabély", "el": "καραμπίνα", "cs": "karabina", "sv": "karbin",
         "ca": "carabina", "bg": "карабина", "da": "karabin",
+        "zh": "卡宾枪", "ja": "カービン",
     },
     "assault rifle": {
         "es": "rifle de asalto", "de": "Sturmgewehr", "fr": "fusil d'assaut",
@@ -797,6 +871,7 @@ GLOSSARY = {
         "hu": "gépkarabély", "el": "τυφέκιο εφόδου", "cs": "útočná puška",
         "sv": "automatkarbiner", "ca": "fusell d'assalt", "bg": "щурмова пушка",
         "da": "stormgevær",
+        "zh": "突击步枪", "ja": "アサルトライフル",
     },
     "non-blowback": {
         "es": "non-blowback (NBB)", "de": "Non-Blowback (NBB)",
@@ -809,6 +884,7 @@ GLOSSARY = {
         "cs": "non-blowback (NBB)", "sv": "non-blowback (NBB)",
         "ca": "non-blowback (NBB)", "bg": "без блоубек (NBB)",
         "da": "non-blowback (NBB)",
+        "zh": "非回膛", "ja": "ノンブローバック",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -821,6 +897,7 @@ GLOSSARY = {
         "ro": "blowback", "nl": "blowback", "hr": "blowback", "tr": "geri tepme",
         "hu": "blowback", "el": "blowback", "cs": "blowback", "sv": "blowback",
         "ca": "blowback", "bg": "блоубек", "da": "blowback",
+        "zh": "回膛", "ja": "ブローバック",
     },
     "recoil": {
         "es": "retroceso", "de": "Rückstoß", "fr": "recul", "it": "rinculo",
@@ -828,6 +905,7 @@ GLOSSARY = {
         "ro": "recul", "nl": "terugslag", "hr": "trzaj", "tr": "geri tepme",
         "hu": "hátralökés", "el": "ανάκρουση", "cs": "zpětný ráz", "sv": "rekyl",
         "ca": "retrocés", "bg": "откат", "da": "rekyl",
+        "zh": "后坐力", "ja": "リコイル",
     },
     "green gas": {
         "es": "green gas", "de": "Green Gas", "fr": "green gas", "it": "green gas",
@@ -835,6 +913,7 @@ GLOSSARY = {
         "ro": "green gas", "nl": "green gas", "hr": "green gas", "tr": "green gas",
         "hu": "green gas", "el": "green gas", "cs": "green gas", "sv": "green gas",
         "ca": "green gas", "bg": "грийн газ", "da": "green gas",
+        "zh": "绿气", "ja": "グリーンガス",
     },
     "battery": {
         "es": "batería", "de": "Akku", "fr": "batterie", "it": "batteria",
@@ -842,6 +921,7 @@ GLOSSARY = {
         "ro": "baterie", "nl": "accu", "hr": "baterija", "tr": "batarya",
         "hu": "akkumulátor", "el": "μπαταρία", "cs": "baterie", "sv": "batteri",
         "ca": "bateria", "bg": "батерия", "da": "batteri",
+        "zh": "电池", "ja": "バッテリー",
     },
     "charger": {
         "es": "cargador de batería", "de": "Ladegerät", "fr": "chargeur de batterie",
@@ -850,6 +930,7 @@ GLOSSARY = {
         "nl": "lader", "hr": "punjač", "tr": "şarj cihazı",
         "hu": "töltő", "el": "φορτιστής", "cs": "nabíječka", "sv": "laddare",
         "ca": "carregador de bateria", "bg": "зарядно устройство", "da": "oplader",
+        "zh": "充电器", "ja": "チャージャー",
     },
     "MOSFET": {
         "es": "MOSFET", "de": "MOSFET", "fr": "MOSFET", "it": "MOSFET",
@@ -857,6 +938,7 @@ GLOSSARY = {
         "ro": "MOSFET", "nl": "MOSFET", "hr": "MOSFET", "tr": "MOSFET",
         "hu": "MOSFET", "el": "MOSFET", "cs": "MOSFET", "sv": "MOSFET",
         "ca": "MOSFET", "bg": "MOSFET", "da": "MOSFET",
+        "zh": "MOSFET", "ja": "MOSFET",
     },
     "rate of fire": {
         "es": "cadencia de tiro", "de": "Feuerrate", "fr": "cadence de tir",
@@ -866,6 +948,7 @@ GLOSSARY = {
         "hu": "tűzgyorsaság", "el": "ρυθμός βολής", "cs": "kadence palby",
         "sv": "eldhastighet", "ca": "cadència de tir", "bg": "скорост на стрелба",
         "da": "skudhastighed",
+        "zh": "射速", "ja": "発射速度",
     },
     "muzzle velocity": {
         "es": "velocidad de boca", "de": "Mündungsgeschwindigkeit", "fr": "vitesse à la bouche",
@@ -875,6 +958,7 @@ GLOSSARY = {
         "hu": "csőtorkolati sebesség", "el": "ταχύτητα στομίου", "cs": "úsťová rychlost",
         "sv": "mynningshastighet", "ca": "velocitat de boca", "bg": "дулна скорост",
         "da": "mundingshastighed",
+        "zh": "枪口初速", "ja": "初速",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -886,12 +970,14 @@ GLOSSARY = {
         "ru": "шар", "pl": "kulka", "uk": "кулька", "ro": "BB",
         "nl": "BB", "hr": "kuglica", "tr": "BB", "hu": "BB",
         "el": "BB", "cs": "BB", "sv": "BB", "ca": "BB", "bg": "BB", "da": "BB",
+        "zh": "BB弹", "ja": "BB弾",
     },
     "BBs": {
         "es": "BBs", "de": "BBs", "fr": "BBs", "it": "BBs", "pt": "BBs",
         "ru": "шары", "pl": "kulki", "uk": "кульки", "ro": "BBs",
         "nl": "BBs", "hr": "kuglice", "tr": "BBler", "hu": "BBk",
         "el": "BBs", "cs": "BBčka", "sv": "BBs", "ca": "BBs", "bg": "BBта", "da": "BBs",
+        "zh": "BB弹", "ja": "BB弾",
     },
     "biodegradable BBs": {
         "es": "BBs biodegradables", "de": "biologisch abbaubare BBs",
@@ -904,6 +990,7 @@ GLOSSARY = {
         "cs": "biologicky rozložitelná BBčka", "sv": "bionedbrytbara BBs",
         "ca": "BBs biodegradables", "bg": "биоразградими BBта",
         "da": "bionedbrydelige BBs",
+        "zh": "可降解BB弹", "ja": "バイオBB弾",
     },
     "tracer BBs": {
         "es": "BBs trazadoras", "de": "Tracer BBs", "fr": "BBs traçantes",
@@ -913,6 +1000,7 @@ GLOSSARY = {
         "hu": "fényjeles BBk", "el": "ιχνηθετικά BBs", "cs": "tracer BBčka",
         "sv": "tracer BBs", "ca": "BBs traçadores", "bg": "трасиращи BBта",
         "da": "tracer BBs",
+        "zh": "曳光BB弹", "ja": "トレーサーBB弾",
     },
     "grenade": {
         "es": "granada", "de": "Granate", "fr": "grenade", "it": "granata",
@@ -920,6 +1008,7 @@ GLOSSARY = {
         "ro": "grenadă", "nl": "granaat", "hr": "granata", "tr": "el bombası",
         "hu": "gránát", "el": "χειροβομβίδα", "cs": "granát", "sv": "granat",
         "ca": "granada", "bg": "граната", "da": "granat",
+        "zh": "手榴弹", "ja": "グレネード",
     },
     "lubricant": {
         "es": "lubricante", "de": "Schmiermittel", "fr": "lubrifiant", "it": "lubrificante",
@@ -927,6 +1016,7 @@ GLOSSARY = {
         "ro": "lubrifiant", "nl": "smeermiddel", "hr": "mazivo", "tr": "yağlayıcı",
         "hu": "kenőanyag", "el": "λιπαντικό", "cs": "mazivo", "sv": "smörjmedel",
         "ca": "lubricant", "bg": "смазка", "da": "smøremiddel",
+        "zh": "润滑剂", "ja": "ルブリカント",
     },
     "silicone oil": {
         "es": "aceite de silicona", "de": "Silikonöl", "fr": "huile de silicone",
@@ -936,6 +1026,7 @@ GLOSSARY = {
         "hu": "szilikonolaj", "el": "σιλικονέλαιο", "cs": "silikonový olej",
         "sv": "silikonolja", "ca": "oli de silicona", "bg": "силиконово масло",
         "da": "silikoneolie",
+        "zh": "硅油", "ja": "シリコンオイル",
     },
     "spray paint": {
         "es": "pintura en spray", "de": "Sprühfarbe", "fr": "peinture en spray",
@@ -945,6 +1036,7 @@ GLOSSARY = {
         "hu": "festékspray", "el": "σπρέι βαφής", "cs": "barva ve spreji",
         "sv": "sprayfärg", "ca": "pintura en esprai", "bg": "спрей боя",
         "da": "spraymaling",
+        "zh": "喷漆", "ja": "スプレーペイント",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -959,6 +1051,7 @@ GLOSSARY = {
         "hu": "red dot irányzék", "el": "κόκκινη κουκκίδα", "cs": "kolimátor",
         "sv": "rödpunktssikte", "ca": "visor de punt vermell", "bg": "червена точка",
         "da": "rødpunktsigte",
+        "zh": "红点瞄准镜", "ja": "ドットサイト",
     },
     "holographic sight": {
         "es": "visor holográfico", "de": "holographisches Visier", "fr": "viseur holographique",
@@ -968,6 +1061,7 @@ GLOSSARY = {
         "hu": "holografikus irányzék", "el": "ολογραφικό σκοπευτικό", "cs": "holografický zaměřovač",
         "sv": "holografiskt sikte", "ca": "visor hologràfic", "bg": "холографичен прицел",
         "da": "holografisk sigte",
+        "zh": "全息瞄准镜", "ja": "ホロサイト",
     },
     "scope": {
         "es": "mira telescópica", "de": "Zielfernrohr", "fr": "lunette de visée",
@@ -977,6 +1071,7 @@ GLOSSARY = {
         "hu": "távcső", "el": "τηλεσκοπικό σκοπευτικό", "cs": "puškohled",
         "sv": "kikarsikte", "ca": "mira telescòpica", "bg": "оптичен прицел",
         "da": "kikkertsigte",
+        "zh": "瞄准镜", "ja": "スコープ",
     },
     "iron sights": {
         "es": "miras metálicas", "de": "Kimme und Korn", "fr": "organes de visée",
@@ -986,6 +1081,7 @@ GLOSSARY = {
         "hu": "mechanikus irányzék", "el": "μεταλλικά σκοπευτικά", "cs": "mechanické mířidla",
         "sv": "mekaniskt sikte", "ca": "mires metàl·liques", "bg": "механичен прицел",
         "da": "mekanisk sigte",
+        "zh": "机械瞄具", "ja": "アイアンサイト",
     },
     "flashlight": {
         "es": "linterna táctica", "de": "taktische Taschenlampe", "fr": "lampe tactique",
@@ -995,6 +1091,7 @@ GLOSSARY = {
         "hu": "taktikai lámpa", "el": "τακτικός φακός", "cs": "taktická svítilna",
         "sv": "taktisk ficklampa", "ca": "llanterna tàctica", "bg": "тактическо фенерче",
         "da": "taktisk lommelygte",
+        "zh": "手电筒", "ja": "フラッシュライト",
     },
     "magnifier": {
         "es": "magnificador", "de": "Vergrößerungsglas", "fr": "magnifier",
@@ -1004,6 +1101,7 @@ GLOSSARY = {
         "hu": "nagyító", "el": "μεγεθυντής", "cs": "zvětšovák",
         "sv": "förstorare", "ca": "magnificador", "bg": "магнифайер",
         "da": "forstørrer",
+        "zh": "放大镜", "ja": "マグニファイア",
     },
     "scope mount": {
         "es": "montura de óptica", "de": "Zielfernrohrmontage", "fr": "montage de lunette",
@@ -1013,6 +1111,7 @@ GLOSSARY = {
         "hu": "távcsőszerelék", "el": "βάση σκοπευτικού", "cs": "montáž puškohledu",
         "sv": "kikarsiktesmontage", "ca": "muntura d'òptica", "bg": "монтаж на прицел",
         "da": "kikkertmontering",
+        "zh": "镜座", "ja": "スコープマウント",
     },
     "scope rings": {
         "es": "anillas de óptica", "de": "Zielfernrohrringe", "fr": "anneaux de lunette",
@@ -1022,6 +1121,7 @@ GLOSSARY = {
         "hu": "távcsőgyűrűk", "el": "δαχτυλίδια σκοπευτικού", "cs": "kroužky puškohledu",
         "sv": "kikarsiktesringar", "ca": "anelles d'òptica", "bg": "пръстени за прицел",
         "da": "kikkertringe",
+        "zh": "镜环", "ja": "スコープリング",
     },
     "laser sight": {
         "es": "láser táctico", "de": "Laservisier", "fr": "viseur laser",
@@ -1031,6 +1131,7 @@ GLOSSARY = {
         "hu": "lézeres irányzék", "el": "σκοπευτικό λέιζερ", "cs": "laserový zaměřovač",
         "sv": "lasersikte", "ca": "visor làser", "bg": "лазерен прицел",
         "da": "lasersigte",
+        "zh": "激光瞄准器", "ja": "レーザーサイト",
     },
     "PEQ box": {
         "es": "PEQ box", "de": "PEQ-Box", "fr": "boîtier PEQ",
@@ -1040,6 +1141,7 @@ GLOSSARY = {
         "hu": "PEQ doboz", "el": "PEQ box", "cs": "PEQ box",
         "sv": "PEQ-box", "ca": "PEQ box", "bg": "PEQ кутия",
         "da": "PEQ-boks",
+        "zh": "PEQ盒", "ja": "PEQボックス",
     },
     "pressure switch": {
         "es": "pulsador remoto", "de": "Druckschalter", "fr": "interrupteur déporté",
@@ -1050,6 +1152,7 @@ GLOSSARY = {
         "hu": "nyomókapcsoló", "el": "διακόπτης πίεσης", "cs": "tlačítkový spínač",
         "sv": "tryckbrytare", "ca": "polsador remot", "bg": "бутон за натиск",
         "da": "trykknap",
+        "zh": "压力开关", "ja": "プレッシャースイッチ",
     },
     "lens protector": {
         "es": "protector de lente", "de": "Linsenschutz", "fr": "protège-lentille",
@@ -1059,6 +1162,7 @@ GLOSSARY = {
         "hu": "lencse védő", "el": "προστατευτικό φακού", "cs": "ochrana čočky",
         "sv": "linsskydd", "ca": "protector de lent", "bg": "предпазител за леща",
         "da": "linsebeskytter",
+        "zh": "镜片保护器", "ja": "レンズプロテクター",
     },
     "scope riser": {
         "es": "elevador de óptica", "de": "Zielfernrohrerhöhung", "fr": "rehausse de lunette",
@@ -1068,6 +1172,7 @@ GLOSSARY = {
         "hu": "távcsőemelő", "el": "ανυψωτής σκοπευτικού", "cs": "zvýšení puškohledu",
         "sv": "kikarsiktesförhöjare", "ca": "elevador d'òptica", "bg": "повдигач за прицел",
         "da": "kikkertforhøjer",
+        "zh": "镜座增高器", "ja": "スコープライザー",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1081,6 +1186,7 @@ GLOSSARY = {
         "hr": "picatinny", "tr": "picatinny", "hu": "picatinny",
         "el": "picatinny", "cs": "picatinny", "sv": "picatinny",
         "ca": "picatinny", "bg": "пикатини", "da": "picatinny",
+        "zh": "皮卡汀尼", "ja": "ピカティニー",
     },
     "M-LOK": {
         "es": "M-LOK", "de": "M-LOK", "fr": "M-LOK", "it": "M-LOK",
@@ -1088,6 +1194,7 @@ GLOSSARY = {
         "ro": "M-LOK", "nl": "M-LOK", "hr": "M-LOK", "tr": "M-LOK",
         "hu": "M-LOK", "el": "M-LOK", "cs": "M-LOK", "sv": "M-LOK",
         "ca": "M-LOK", "bg": "M-LOK", "da": "M-LOK",
+        "zh": "M-LOK", "ja": "M-LOK",
     },
     "keymod": {
         "es": "keymod", "de": "KeyMod", "fr": "keymod", "it": "keymod",
@@ -1095,6 +1202,7 @@ GLOSSARY = {
         "ro": "keymod", "nl": "keymod", "hr": "keymod", "tr": "keymod",
         "hu": "keymod", "el": "keymod", "cs": "keymod", "sv": "keymod",
         "ca": "keymod", "bg": "KeyMod", "da": "keymod",
+        "zh": "KeyMod", "ja": "キーモッド",
     },
     "MOLLE": {
         "es": "MOLLE", "de": "MOLLE", "fr": "MOLLE", "it": "MOLLE",
@@ -1102,6 +1210,7 @@ GLOSSARY = {
         "ro": "MOLLE", "nl": "MOLLE", "hr": "MOLLE", "tr": "MOLLE",
         "hu": "MOLLE", "el": "MOLLE", "cs": "MOLLE", "sv": "MOLLE",
         "ca": "MOLLE", "bg": "MOLLE", "da": "MOLLE",
+        "zh": "MOLLE", "ja": "MOLLE",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1116,6 +1225,7 @@ GLOSSARY = {
         "hu": "lemezviselő", "el": "φορέας πλακών", "cs": "nosič plátů",
         "sv": "platbärare", "ca": "portaplaques", "bg": "плейт кериър",
         "da": "pladebærer",
+        "zh": "板甲背心", "ja": "プレートキャリア",
     },
     "tactical vest": {
         "es": "chaleco táctico", "de": "taktische Weste", "fr": "gilet tactique",
@@ -1125,6 +1235,7 @@ GLOSSARY = {
         "hu": "taktikai mellény", "el": "τακτικό γιλέκο", "cs": "taktická vesta",
         "sv": "taktisk väst", "ca": "armilla tàctica", "bg": "тактическа жилетка",
         "da": "taktisk vest",
+        "zh": "战术背心", "ja": "タクティカルベスト",
     },
     "magazine pouch": {
         "es": "portacargador", "de": "Magazintasche", "fr": "porte-chargeur",
@@ -1134,6 +1245,7 @@ GLOSSARY = {
         "hu": "tártáska", "el": "θήκη γεμιστήρα", "cs": "sumka na zásobníky",
         "sv": "magasinficka", "ca": "portacarregador", "bg": "джоб за пълнители",
         "da": "magasinlomme",
+        "zh": "弹匣包", "ja": "マガジンポーチ",
     },
     "holster": {
         "es": "funda", "de": "Holster", "fr": "holster", "it": "fondina",
@@ -1141,6 +1253,7 @@ GLOSSARY = {
         "ro": "toc", "nl": "holster", "hr": "futrola", "tr": "kılıf",
         "hu": "pisztolytáska", "el": "θήκη πιστολιού", "cs": "pouzdro", "sv": "hölster",
         "ca": "funda", "bg": "кобур", "da": "hylster",
+        "zh": "枪套", "ja": "ホルスター",
     },
     "helmet": {
         "es": "casco", "de": "Helm", "fr": "casque", "it": "elmetto",
@@ -1148,6 +1261,7 @@ GLOSSARY = {
         "ro": "cască", "nl": "helm", "hr": "kaciga", "tr": "kask",
         "hu": "sisak", "el": "κράνος", "cs": "helma", "sv": "hjälm",
         "ca": "casc", "bg": "шлем", "da": "hjelm",
+        "zh": "头盔", "ja": "ヘルメット",
     },
     "chest rig": {
         "es": "chest rig", "de": "Chest Rig", "fr": "chest rig",
@@ -1157,6 +1271,7 @@ GLOSSARY = {
         "hu": "chest rig", "el": "chest rig", "cs": "chest rig",
         "sv": "chest rig", "ca": "chest rig", "bg": "чест риг",
         "da": "chest rig",
+        "zh": "胸挂", "ja": "チェストリグ",
     },
     "pouch": {
         "es": "bolsillo táctico", "de": "Tasche", "fr": "pochette tactique",
@@ -1165,6 +1280,7 @@ GLOSSARY = {
         "nl": "tactische tas", "hr": "torbica", "tr": "cep", "hu": "táska",
         "el": "τακτική θήκη", "cs": "sumka", "sv": "taktisk ficka",
         "ca": "butxaca tàctica", "bg": "тактически джоб", "da": "taktisk lomme",
+        "zh": "附件包", "ja": "ポーチ",
     },
     "dump pouch": {
         "es": "bolsa de descarga", "de": "Dump Pouch", "fr": "pochette de vidage",
@@ -1174,6 +1290,7 @@ GLOSSARY = {
         "hu": "dump pouch", "el": "θήκη απόρριψης", "cs": "vyhazovací sumka",
         "sv": "dump pouch", "ca": "bossa de descàrrega", "bg": "контейнер за изхвърляне",
         "da": "dump pouch",
+        "zh": "回收袋", "ja": "ダンプポーチ",
     },
     "tactical belt": {
         "es": "cinturón táctico", "de": "taktischer Gürtel", "fr": "ceinture tactique",
@@ -1183,6 +1300,7 @@ GLOSSARY = {
         "hu": "taktikai öv", "el": "τακτική ζώνη", "cs": "taktický opasek",
         "sv": "taktiskt bälte", "ca": "cinturó tàctic", "bg": "тактически колан",
         "da": "taktisk bælte",
+        "zh": "战术腰带", "ja": "タクティカルベルト",
     },
     "gun bag": {
         "es": "bolsa para réplica", "de": "Waffentasche", "fr": "housse de transport",
@@ -1192,6 +1310,7 @@ GLOSSARY = {
         "hu": "fegyvertáska", "el": "θήκη όπλου", "cs": "obal na zbraň",
         "sv": "vapenfodral", "ca": "bossa per a rèplica", "bg": "чанта за оръжие",
         "da": "våbentaske",
+        "zh": "枪包", "ja": "ガンバッグ",
     },
     "tactical pants": {
         "es": "pantalones tácticos", "de": "taktische Hose", "fr": "pantalon tactique",
@@ -1201,6 +1320,7 @@ GLOSSARY = {
         "hu": "taktikai nadrág", "el": "τακτικό παντελόνι", "cs": "taktické kalhoty",
         "sv": "taktiska byxor", "ca": "pantalons tàctics", "bg": "тактически панталони",
         "da": "taktiske bukser",
+        "zh": "战术裤", "ja": "タクティカルパンツ",
     },
     "gloves": {
         "es": "guantes", "de": "Handschuhe", "fr": "gants", "it": "guanti",
@@ -1208,6 +1328,7 @@ GLOSSARY = {
         "ro": "mănuși", "nl": "handschoenen", "hr": "rukavice", "tr": "eldiven",
         "hu": "kesztyű", "el": "γάντια", "cs": "rukavice", "sv": "handskar",
         "ca": "guants", "bg": "ръкавици", "da": "handsker",
+        "zh": "手套", "ja": "グローブ",
     },
     "knee pads": {
         "es": "rodilleras", "de": "Knieschoner", "fr": "genouillères",
@@ -1217,6 +1338,7 @@ GLOSSARY = {
         "hu": "térdvédő", "el": "επιγονατίδες", "cs": "kolenní chrániče",
         "sv": "knäskydd", "ca": "genolleres", "bg": "наколенки",
         "da": "knæbeskyttere",
+        "zh": "护膝", "ja": "ニーパッド",
     },
     "hydration pack": {
         "es": "mochila de hidratación", "de": "Trinkrucksack", "fr": "sac d'hydratation",
@@ -1227,6 +1349,7 @@ GLOSSARY = {
         "el": "σακίδιο ενυδάτωσης", "cs": "hydratační batoh",
         "sv": "vätskeryggsäck", "ca": "motxilla d'hidratació", "bg": "хидратираща раница",
         "da": "drikkepose",
+        "zh": "水袋包", "ja": "ハイドレーションパック",
     },
     "patch": {
         "es": "parche", "de": "Patch", "fr": "écusson", "it": "toppa",
@@ -1234,6 +1357,7 @@ GLOSSARY = {
         "ro": "ecuson", "nl": "patch", "hr": "zakrpa", "tr": "yama",
         "hu": "felvarró", "el": "σήμα", "cs": "nášivka", "sv": "emblem",
         "ca": "pedaç", "bg": "нашивка", "da": "patch",
+        "zh": "臂章", "ja": "パッチ",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1248,6 +1372,7 @@ GLOSSARY = {
         "hu": "védőszemüveg", "el": "προστατευτικά γυαλιά", "cs": "ochranné brýle",
         "sv": "skyddsglasögon", "ca": "ulleres de protecció", "bg": "предпазни очила",
         "da": "beskyttelsesbriller",
+        "zh": "护目镜", "ja": "ゴーグル",
     },
     "full face mask": {
         "es": "máscara facial completa", "de": "Vollgesichtsmaske", "fr": "masque intégral",
@@ -1259,6 +1384,7 @@ GLOSSARY = {
         "el": "μάσκα πλήρους προσώπου", "cs": "celoobličejová maska",
         "sv": "heltäckande ansiktsmask", "ca": "màscara facial completa",
         "bg": "маска за цялото лице", "da": "heldækkende ansigtsmaske",
+        "zh": "全脸面罩", "ja": "フルフェイスマスク",
     },
     "mesh mask": {
         "es": "máscara de malla", "de": "Gittermaske", "fr": "masque en grillage",
@@ -1268,6 +1394,7 @@ GLOSSARY = {
         "hu": "hálós maszk", "el": "μάσκα πλέγματος", "cs": "síťovaná maska",
         "sv": "nätmask", "ca": "màscara de malla", "bg": "мрежеста маска",
         "da": "netmaske",
+        "zh": "铁网面罩", "ja": "メッシュマスク",
     },
     "eye protection": {
         "es": "protección ocular", "de": "Augenschutz", "fr": "protection oculaire",
@@ -1277,6 +1404,7 @@ GLOSSARY = {
         "hu": "szemvédelem", "el": "προστασία ματιών", "cs": "ochrana očí",
         "sv": "ögonskydd", "ca": "protecció ocular", "bg": "защита за очите",
         "da": "øjenbeskyttelse",
+        "zh": "护目", "ja": "アイプロテクション",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1294,6 +1422,7 @@ GLOSSARY = {
         "cs": "CQB (boj zblízka)", "sv": "CQB (närstrid)",
         "ca": "CQB (combat en espais tancats)", "bg": "CQB (бой в сграда)",
         "da": "CQB (nærkamp)",
+        "zh": "近距离作战", "ja": "CQB",
     },
     "milsim": {
         "es": "milsim (simulación militar)", "de": "MilSim (Militärsimulation)",
@@ -1306,6 +1435,7 @@ GLOSSARY = {
         "cs": "milsim (vojenská simulace)", "sv": "milsim (militär simulering)",
         "ca": "milsim (simulació militar)", "bg": "милсим (военна симулация)",
         "da": "milsim (militær simulering)",
+        "zh": "军事模拟", "ja": "ミルシム",
     },
     "skirmish": {
         "es": "partida", "de": "Gefecht", "fr": "partie", "it": "partita",
@@ -1313,6 +1443,7 @@ GLOSSARY = {
         "ro": "partidă", "nl": "gevecht", "hr": "borba", "tr": "çatışma",
         "hu": "játék", "el": "παιχνίδι", "cs": "hra", "sv": "strid",
         "ca": "partida", "bg": "игра", "da": "kamp",
+        "zh": "遭遇战", "ja": "スカーミッシュ",
     },
     "chronograph": {
         "es": "cronógrafo", "de": "Chronograph", "fr": "chronographe",
@@ -1322,6 +1453,7 @@ GLOSSARY = {
         "hu": "kronográf", "el": "χρονογράφος", "cs": "chronograf",
         "sv": "kronograf", "ca": "cronògraf", "bg": "хронограф",
         "da": "kronograf",
+        "zh": "弹速仪", "ja": "弾速計",
     },
     "semi-auto": {
         "es": "semiautomático", "de": "halbautomatisch", "fr": "semi-automatique",
@@ -1331,6 +1463,7 @@ GLOSSARY = {
         "hu": "félautomata", "el": "ημιαυτόματο", "cs": "poloautomatický",
         "sv": "halvautomatisk", "ca": "semiautomàtic", "bg": "полуавтоматичен",
         "da": "halvautomatisk",
+        "zh": "半自动", "ja": "セミオート",
     },
     "full-auto": {
         "es": "automático", "de": "vollautomatisch", "fr": "automatique",
@@ -1340,6 +1473,7 @@ GLOSSARY = {
         "hu": "automata", "el": "αυτόματο", "cs": "automatický",
         "sv": "helautomatisk", "ca": "automàtic", "bg": "автоматичен",
         "da": "fuldautomatisk",
+        "zh": "全自动", "ja": "フルオート",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1354,6 +1488,7 @@ GLOSSARY = {
         "hu": "ghillie ruha", "el": "στολή ghillie", "cs": "maskovací oblek ghillie",
         "sv": "ghilliedräkt", "ca": "vestit ghillie", "bg": "маскировъчен костюм",
         "da": "ghillie dragt",
+        "zh": "吉利服", "ja": "ギリースーツ",
     },
     "camouflage": {
         "es": "camuflaje", "de": "Tarnung", "fr": "camouflage", "it": "mimetizzazione",
@@ -1361,6 +1496,7 @@ GLOSSARY = {
         "ro": "camuflaj", "nl": "camouflage", "hr": "kamuflažа", "tr": "kamuflaj",
         "hu": "álcázás", "el": "καμουφλάζ", "cs": "maskování", "sv": "kamouflage",
         "ca": "camuflatge", "bg": "камуфлаж", "da": "camouflage",
+        "zh": "迷彩", "ja": "迷彩",
     },
     "face paint": {
         "es": "pintura facial de camuflaje", "de": "Tarnschminke",
@@ -1371,6 +1507,7 @@ GLOSSARY = {
         "hu": "álcázó festék", "el": "βαφή καμουφλάζ", "cs": "maskovací barva",
         "sv": "kamouflagefärg", "ca": "pintura facial de camuflatge",
         "bg": "камуфлажна боя", "da": "camouflagemaling",
+        "zh": "面部涂装", "ja": "フェイスペイント",
     },
     "camo tape": {
         "es": "cinta de camuflaje", "de": "Tarnband", "fr": "bande de camouflage",
@@ -1380,6 +1517,7 @@ GLOSSARY = {
         "hu": "álcázó szalag", "el": "ταινία καμουφλάζ", "cs": "maskovací páska",
         "sv": "kamouflagetejp", "ca": "cinta de camuflatge", "bg": "камуфлажна лента",
         "da": "camouflagetape",
+        "zh": "迷彩胶带", "ja": "カモテープ",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1392,6 +1530,7 @@ GLOSSARY = {
         "ro": "stație radio", "nl": "portofoon", "hr": "radio", "tr": "telsiz",
         "hu": "rádió", "el": "ασύρματος", "cs": "vysílačka", "sv": "radio",
         "ca": "ràdio", "bg": "радиостанция", "da": "radio",
+        "zh": "对讲机", "ja": "無線機",
     },
     "headset": {
         "es": "auriculares tácticos", "de": "taktisches Headset", "fr": "casque audio tactique",
@@ -1401,6 +1540,7 @@ GLOSSARY = {
         "hu": "taktikai headset", "el": "τακτικά ακουστικά", "cs": "taktický headset",
         "sv": "taktiskt headset", "ca": "auriculars tàctics", "bg": "тактически слушалки",
         "da": "taktisk headset",
+        "zh": "耳麦", "ja": "ヘッドセット",
     },
     "PTT": {
         "es": "PTT (pulsar para hablar)", "de": "PTT (Push-to-Talk)",
@@ -1413,6 +1553,7 @@ GLOSSARY = {
         "cs": "PTT (push-to-talk)", "sv": "PTT (push-to-talk)",
         "ca": "PTT (prémer per parlar)", "bg": "PTT (натисни за говорене)",
         "da": "PTT (tryk-for-at-tale)",
+        "zh": "PTT", "ja": "PTT",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1428,6 +1569,7 @@ GLOSSARY = {
         "hu": "éjjellátó", "el": "συσκευή νυχτερινής όρασης", "cs": "noktovizor",
         "sv": "mörkersikte", "ca": "ulleres de visió nocturna",
         "bg": "уред за нощно виждане", "da": "natsynsbriller",
+        "zh": "夜视仪", "ja": "ナイトビジョンゴーグル",
     },
     "thermal sight": {
         "es": "visor térmico", "de": "Wärmebildgerät", "fr": "viseur thermique",
@@ -1437,6 +1579,7 @@ GLOSSARY = {
         "hu": "hőkamera", "el": "θερμική κάμερα", "cs": "termovize",
         "sv": "värmekamera", "ca": "visor tèrmic", "bg": "термовизор",
         "da": "termisk sigte",
+        "zh": "热成像瞄准镜", "ja": "サーマルサイト",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1451,6 +1594,7 @@ GLOSSARY = {
         "hu": "full metal", "el": "full metal", "cs": "full metal",
         "sv": "full metal", "ca": "full metal", "bg": "фул метал",
         "da": "fuld metal",
+        "zh": "全金属", "ja": "フルメタル",
     },
     "polymer": {
         "es": "polímero", "de": "Polymer", "fr": "polymère", "it": "polimero",
@@ -1458,6 +1602,7 @@ GLOSSARY = {
         "ro": "polimer", "nl": "polymeer", "hr": "polimer", "tr": "polimer",
         "hu": "polimer", "el": "πολυμερές", "cs": "polymer", "sv": "polymer",
         "ca": "polímer", "bg": "полимер", "da": "polymer",
+        "zh": "聚合物", "ja": "ポリマー",
     },
     "steel": {
         "es": "acero", "de": "Stahl", "fr": "acier", "it": "acciaio",
@@ -1465,6 +1610,7 @@ GLOSSARY = {
         "ro": "oțel", "nl": "staal", "hr": "čelik", "tr": "çelik",
         "hu": "acél", "el": "ατσάλι", "cs": "ocel", "sv": "stål",
         "ca": "acer", "bg": "стомана", "da": "stål",
+        "zh": "钢", "ja": "スチール",
     },
     "aluminum alloy": {
         "es": "aleación de aluminio", "de": "Aluminiumlegierung", "fr": "alliage d'aluminium",
@@ -1474,6 +1620,7 @@ GLOSSARY = {
         "hu": "alumíniumötvözet", "el": "κράμα αλουμινίου", "cs": "hliníková slitina",
         "sv": "aluminiumlegering", "ca": "aliatge d'alumini", "bg": "алуминиева сплав",
         "da": "aluminiumslegering",
+        "zh": "铝合金", "ja": "アルミ合金",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1486,6 +1633,7 @@ GLOSSARY = {
         "ro": "îmbunătățire", "nl": "upgrade", "hr": "nadogradnja", "tr": "yükseltme",
         "hu": "fejlesztés", "el": "αναβάθμιση", "cs": "vylepšení", "sv": "uppgradering",
         "ca": "millora", "bg": "ъпгрейд", "da": "opgradering",
+        "zh": "升级", "ja": "アップグレード",
     },
     "tight bore barrel": {
         "es": "cañón de precisión", "de": "Präzisionslauf", "fr": "canon de précision",
@@ -1495,6 +1643,7 @@ GLOSSARY = {
         "hu": "precíziós cső", "el": "κάννη ακριβείας", "cs": "přesná hlaveň",
         "sv": "precisionspipa", "ca": "canó de precisió", "bg": "прецизен ствол",
         "da": "præcisionsløb",
+        "zh": "精密内管", "ja": "タイトバレル",
     },
     "precision barrel": {
         "es": "cañón de precisión", "de": "Präzisionslauf", "fr": "canon de précision",
@@ -1504,6 +1653,7 @@ GLOSSARY = {
         "hu": "precíziós cső", "el": "κάννη ακριβείας", "cs": "přesná hlaveň",
         "sv": "precisionspipa", "ca": "canó de precisió", "bg": "прецизен ствол",
         "da": "præcisionsløb",
+        "zh": "精密枪管", "ja": "精密バレル",
     },
     "motor": {
         "es": "motor", "de": "Motor", "fr": "moteur", "it": "motore",
@@ -1511,6 +1661,7 @@ GLOSSARY = {
         "ro": "motor", "nl": "motor", "hr": "motor", "tr": "motor",
         "hu": "motor", "el": "κινητήρας", "cs": "motor", "sv": "motor",
         "ca": "motor", "bg": "мотор", "da": "motor",
+        "zh": "电机", "ja": "モーター",
     },
     "gear set": {
         "es": "set de engranajes", "de": "Zahnradsatz", "fr": "jeu d'engrenages",
@@ -1520,6 +1671,7 @@ GLOSSARY = {
         "hu": "fogaskerék készlet", "el": "σετ γραναζιών", "cs": "sada ozubených kol",
         "sv": "kugghjulsset", "ca": "joc d'engranatges", "bg": "комплект зъбни колела",
         "da": "tandhjulssæt",
+        "zh": "齿轮组", "ja": "ギアセット",
     },
     "wiring": {
         "es": "cableado", "de": "Verkabelung", "fr": "câblage", "it": "cablaggio",
@@ -1527,6 +1679,7 @@ GLOSSARY = {
         "ro": "cablaj", "nl": "bedrading", "hr": "kabliranje", "tr": "kablolama",
         "hu": "kábelezés", "el": "καλωδίωση", "cs": "kabeláž", "sv": "kabeldragning",
         "ca": "cablejat", "bg": "окабеляване", "da": "ledningsføring",
+        "zh": "接线", "ja": "配線",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1544,6 +1697,7 @@ GLOSSARY = {
         "cs": "konektor Deans (T-plug)", "sv": "Deans-kontakt (T-plug)",
         "ca": "connector Deans (T-plug)", "bg": "конектор Deans (T-plug)",
         "da": "Deans-stik (T-plug)",
+        "zh": "Deans接头", "ja": "ディーンズコネクター",
     },
     "Tamiya connector": {
         "es": "conector Tamiya", "de": "Tamiya-Stecker", "fr": "connecteur Tamiya",
@@ -1553,6 +1707,7 @@ GLOSSARY = {
         "hu": "Tamiya csatlakozó", "el": "σύνδεσμος Tamiya", "cs": "konektor Tamiya",
         "sv": "Tamiya-kontakt", "ca": "connector Tamiya", "bg": "конектор Tamiya",
         "da": "Tamiya-stik",
+        "zh": "田宫接头", "ja": "タミヤコネクター",
     },
 }
 
@@ -1580,6 +1735,8 @@ SUPPORTED_LANGUAGES = {
     "ca": "Catalan",
     "bg": "Bulgarian",
     "da": "Danish",
+    "zh": "Chinese",
+    "ja": "Japanese",
 }
 
 

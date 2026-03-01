@@ -256,7 +256,8 @@ class GlossaryStore:
     async def get_all(self, source_lang: str = "en", target_lang: str = "es") -> Dict[str, str]:
         """Get all custom entries for a language pair (cached)."""
         pair = (source_lang, target_lang)
-        if pair not in self._cache and self.redis:
+        # Always reload from Redis to ensure cross-worker consistency in multi-worker setups
+        if self.redis:
             await self.load(source_lang, target_lang)
         return dict(self._cache.get(pair, {}))
 

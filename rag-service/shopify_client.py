@@ -249,14 +249,17 @@ class ShopifyClient:
         }
 
     def extract_page_text(self, page: dict) -> str:
-        """Combine page fields into embeddable text."""
+        """Combine page fields into embeddable text, stripping HTML."""
         parts = []
         title = page.get("title", "")
         if title:
             parts.append(title)
-        body = page.get("body_summary", "")
-        if body:
-            parts.append(body)
+        body_html = page.get("body_html", "") or page.get("body_summary", "")
+        if body_html:
+            soup = BeautifulSoup(body_html, "html.parser")
+            body = soup.get_text(separator="\n", strip=True)
+            if body:
+                parts.append(body)
         return "\n".join(parts)
 
     def extract_page_metadata(self, page: dict) -> dict:

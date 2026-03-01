@@ -145,9 +145,98 @@ class CatalogIndexer:
 
     # ── Index pages ───────────────────────────────────────────────
 
+    @staticmethod
+    def _chunk_page_html(title: str, body_html: str, max_chunk_chars: int = 1500) -> List[Dict]:
+        """Split a page into chunks by HTML headings (h1-h4).
+
+        Each chunk contains:
+          - section_heading: the heading text (or "Introduction" for content before first heading)
+          - text: the section content
+          - chunk_index: position in the page
+
+        If a section is longer than max_chunk_chars, it's split into paragraphs.
+        """
+        from bs4 import BeautifulSoup
+        import re
+
+        if not body_html:
+            return [{"section_heading": title, "text": title, "chunk_index": 0}] if title else []
+
+        soup = BeautifulSoup(body_html, "html.parser")
+
+        # Split by headings (h1, h2, h3, h4)
+        sections: List[Dict] = []
+        current_heading = "Introduction"
+        current_parts: List[str] = []
+
+        for element in soup.children:
+            tag_name = getattr(element, "name", None)
+            if tag_name in ("h1", "h2", "h3", "h4"):
+                # Save previous section
+                if current_parts:
+                    text = "\n".join(current_parts).strip()
+                    if text:
+                        sections.append({"heading": current_heading, "text": text})
+                current_heading = element.get_text(strip=True)
+                current_parts = []
+            else:
+                text = element.get_text(separator="\n", strip=True) if hasattr(element, "get_text") else str(element).strip()
+                if text:
+                    current_parts.append(text)
+
+        # Don't forget last section
+        if current_parts:
+            text = "\n".join(current_parts).strip()
+            if text:
+                sections.append({"heading": current_heading, "text": text})
+
+        # If no sections found, treat entire content as one chunk
+        if not sections:
+            full_text = soup.get_text(separator="\n", strip=True)
+            if full_text:
+                sections = [{"heading": title, "text": full_text}]
+
+        # Build chunks with page title prefix for context
+        chunks = []
+        for section in sections:
+            heading = section["heading"]
+            text = section["text"]
+            # Prefix with page title + section heading for better retrieval
+            chunk_text = f"{title} — {heading}\n{text}"
+
+            if len(chunk_text) <= max_chunk_chars:
+                chunks.append({
+                    "section_heading": heading,
+                    "text": chunk_text,
+                    "chunk_index": len(chunks),
+                })
+            else:
+                # Split long sections by double newline (paragraphs)
+                paragraphs = re.split(r"\n{2,}", text)
+                buffer = ""
+                for para in paragraphs:
+                    candidate = f"{buffer}\n{para}".strip() if buffer else para
+                    if len(f"{title} — {heading}\n{candidate}") > max_chunk_chars and buffer:
+                        chunks.append({
+                            "section_heading": heading,
+                            "text": f"{title} — {heading}\n{buffer}",
+                            "chunk_index": len(chunks),
+                        })
+                        buffer = para
+                    else:
+                        buffer = candidate
+                if buffer:
+                    chunks.append({
+                        "section_heading": heading,
+                        "text": f"{title} — {heading}\n{buffer}",
+                        "chunk_index": len(chunks),
+                    })
+
+        return chunks
+
     async def index_pages(self, pages_data: List[dict], shopify_client,
                            content_hash_store=None) -> dict:
-        """Index a list of flattened pages into Qdrant."""
+        """Index pages as chunked sections into Qdrant for fine-grained retrieval."""
         from sparse_encoder import encode_sparse
 
         indexed = 0
@@ -158,20 +247,30 @@ class CatalogIndexer:
         items = []
 
         for page in pages_data:
-            text = shopify_client.extract_page_text(page)
-            if not text or len(text) < 10:
+            page_title = page.get("title", "")
+            body_html = page.get("body_html", "") or page.get("body_summary", "")
+            if not body_html and not page_title:
                 continue
 
+            full_text = shopify_client.extract_page_text(page)
             item_key = f"page:{page.get('id', '')}"
             if content_hash_store:
-                if not await content_hash_store.has_changed(item_key, text):
+                if not await content_hash_store.has_changed(item_key, full_text or ""):
                     skipped += 1
                     continue
 
-            metadata = shopify_client.extract_page_metadata(page)
-            texts.append(text)
-            metadatas.append(metadata)
-            items.append((item_key, text))
+            base_metadata = shopify_client.extract_page_metadata(page)
+            chunks = self._chunk_page_html(page_title, body_html)
+
+            for chunk in chunks:
+                texts.append(chunk["text"])
+                metadatas.append({
+                    **base_metadata,
+                    "section_heading": chunk["section_heading"],
+                    "chunk_index": chunk["chunk_index"],
+                    "total_chunks": len(chunks),
+                })
+                items.append((item_key, full_text or ""))
 
         if not texts:
             return {"indexed": indexed, "skipped": skipped}
@@ -179,14 +278,15 @@ class CatalogIndexer:
         loop = asyncio.get_event_loop()
         dense_embeddings = await loop.run_in_executor(
             None,
-            lambda: self.model.encode(texts, normalize_embeddings=True, batch_size=len(texts))
+            lambda: self.model.encode(texts, normalize_embeddings=True, batch_size=min(len(texts), 64))
         )
         sparse_embeddings = await loop.run_in_executor(None, lambda: encode_sparse(texts))
 
         points = []
         for i, (text, metadata) in enumerate(zip(texts, metadatas)):
             shopify_id = str(metadata.get("shopify_id", ""))
-            point_id = self._generate_id("page", shopify_id)
+            chunk_idx = metadata.get("chunk_index", 0)
+            point_id = self._generate_id("page_chunk", f"{shopify_id}:{chunk_idx}")
             payload = {"text": text, "source_type": "page", **metadata}
             points.append(PointStruct(
                 id=point_id,
@@ -200,11 +300,14 @@ class CatalogIndexer:
         )
 
         if content_hash_store:
+            seen_keys = set()
             for item_key, text in items:
-                await content_hash_store.set_hash(item_key, text)
+                if item_key not in seen_keys:
+                    await content_hash_store.set_hash(item_key, text)
+                    seen_keys.add(item_key)
 
         indexed = len(points)
-        logger.info(f"Indexed {indexed} pages, skipped {skipped}")
+        logger.info(f"Indexed {indexed} page chunks from {len(pages_data)} pages, skipped {skipped}")
         return {"indexed": indexed, "skipped": skipped}
 
     # ── Search ────────────────────────────────────────────────────
@@ -280,6 +383,9 @@ class CatalogIndexer:
                     "handle": r.payload.get("handle", ""),
                     "url": r.payload.get("url", ""),
                     "text": r.payload.get("text", ""),
+                    "section_heading": r.payload.get("section_heading", ""),
+                    "chunk_index": r.payload.get("chunk_index", 0),
+                    "total_chunks": r.payload.get("total_chunks", 1),
                     "score": round(r.score, 4),
                     "source_type": "page",
                     "shopify_id": r.payload.get("shopify_id", ""),

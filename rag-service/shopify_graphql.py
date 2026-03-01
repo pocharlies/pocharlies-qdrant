@@ -279,7 +279,7 @@ class ShopifyGraphQL:
                         pages {
                             edges {
                                 node {
-                                    id title bodySummary handle createdAt updatedAt
+                                    id title body handle createdAt updatedAt
                                 }
                             }
                         }
@@ -420,7 +420,7 @@ class ShopifyGraphQL:
         return {
             "id": node.get("id"),
             "title": node.get("title", ""),
-            "body_summary": node.get("bodySummary", ""),
+            "body_html": node.get("body", ""),
             "handle": node.get("handle", ""),
             "created_at": node.get("createdAt", ""),
             "updated_at": node.get("updatedAt", ""),
