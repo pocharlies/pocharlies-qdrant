@@ -905,42 +905,48 @@ async function syncProducts(syncType) {
   barEl.style.width = '0%';
   infoEl.textContent = 'Starting ' + syncType + ' sync...';
   try {
-    const r = await fetch('/products/sync', {
+    const r = await fetch('/catalog/full-sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sync_type: syncType }),
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'Sync failed');
-    _pollProductSync(d.job_id);
+    _pollProductSync(d.sync_id);
   } catch (e) {
     infoEl.textContent = 'Error: ' + e.message;
   }
 }
 
-function _pollProductSync(jobId) {
+function _pollProductSync(syncId) {
   if (_productSyncInterval) clearInterval(_productSyncInterval);
   _productSyncInterval = setInterval(async function() {
     try {
-      const r = await fetch('/products/sync/' + jobId);
+      const r = await fetch('/products/sync/history');
       const d = await r.json();
       const barEl = document.getElementById('product-sync-bar');
       const infoEl = document.getElementById('product-sync-info');
-      const pct = d.total_products > 0 ? Math.min(100, Math.round((d.products_synced / d.total_products) * 100)) : 0;
-      barEl.style.width = pct + '%';
-      infoEl.textContent = d.status + ' — ' + (d.products_synced || 0) + ' synced';
-      if (d.status === 'completed' || d.status === 'failed') {
+      const sync = (d.history || []).find(function(s) { return s.sync_id === syncId; });
+      if (!sync) return;
+      var processed = parseInt(sync.items_processed) || 0;
+      if (sync.status === 'running') {
+        barEl.style.width = '50%';
+        infoEl.textContent = 'Syncing... ' + processed + ' items processed';
+      } else if (sync.status === 'completed') {
         clearInterval(_productSyncInterval);
         _productSyncInterval = null;
-        if (d.status === 'completed') {
-          barEl.style.width = '100%';
-          infoEl.textContent = 'Sync complete: ' + d.products_synced + ' products indexed';
-        }
+        barEl.style.width = '100%';
+        infoEl.textContent = 'Sync complete: ' + processed + ' items indexed';
         fetchProductStats();
         fetchRagCollections();
+      } else if (sync.status === 'failed') {
+        clearInterval(_productSyncInterval);
+        _productSyncInterval = null;
+        var errs = JSON.parse(sync.errors || '[]');
+        infoEl.textContent = 'Sync failed' + (errs.length ? ': ' + errs[0] : '');
       }
     } catch (_e) { /* ignore */ }
-  }, 2000);
+  }, 3000);
 }
 
 async function searchProducts() {
