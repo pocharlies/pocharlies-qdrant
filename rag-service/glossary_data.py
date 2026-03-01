@@ -639,6 +639,34 @@ GLOSSARY = {
         "sv": "speed loader", "ca": "carregador ràpid", "bg": "спийдлоудър",
         "da": "speed loader",
     },
+    "bolt": {
+        "es": "cerrojo", "de": "Verschluss", "fr": "culasse", "it": "otturatore",
+        "pt": "ferrolho", "ru": "затвор", "pl": "zamek", "uk": "затвор",
+        "ro": "închizător", "nl": "grendel", "hr": "zatvarač", "tr": "sürgü",
+        "hu": "zár", "el": "κλείστρο", "cs": "závěr", "sv": "slutstycke",
+        "ca": "forrellat", "bg": "затвор", "da": "bundstykke",
+    },
+    "buffer": {
+        "es": "buffer", "de": "Puffer", "fr": "tampon", "it": "buffer",
+        "pt": "buffer", "ru": "буфер", "pl": "bufor", "uk": "буфер",
+        "ro": "buffer", "nl": "buffer", "hr": "odbojnik", "tr": "tampon",
+        "hu": "ütköző", "el": "ρυθμιστής", "cs": "buffer", "sv": "buffert",
+        "ca": "buffer", "bg": "буфер", "da": "buffer",
+    },
+    "sling": {
+        "es": "correa", "de": "Tragegurt", "fr": "bretelle", "it": "cinghia",
+        "pt": "bandoleira", "ru": "ремень", "pl": "zawieszenie", "uk": "ремінь",
+        "ro": "curea", "nl": "draagriem", "hr": "remen", "tr": "askı kayışı",
+        "hu": "hordszíj", "el": "αορτήρας", "cs": "popruh", "sv": "vapenrem",
+        "ca": "corretja", "bg": "каишка", "da": "bærerem",
+    },
+    "bipod": {
+        "es": "bípode", "de": "Zweibein", "fr": "bipied", "it": "bipiede",
+        "pt": "bipé", "ru": "сошки", "pl": "dwójnóg", "uk": "сошки",
+        "ro": "bipod", "nl": "bipod", "hr": "dvonožac", "tr": "bipod",
+        "hu": "kétlábú", "el": "δίποδο", "cs": "dvojnožka", "sv": "tvåfot",
+        "ca": "bípode", "bg": "двуножник", "da": "bipod",
+    },
 
     # ══════════════════════════════════════════════════════════════
     # WEAPON TYPES
@@ -761,6 +789,27 @@ GLOSSARY = {
         "hu": "karabély", "el": "καραμπίνα", "cs": "karabina", "sv": "karbin",
         "ca": "carabina", "bg": "карабина", "da": "karabin",
     },
+    "assault rifle": {
+        "es": "rifle de asalto", "de": "Sturmgewehr", "fr": "fusil d'assaut",
+        "it": "fucile d'assalto", "pt": "fuzil de assalto", "ru": "штурмовая винтовка",
+        "pl": "karabin szturmowy", "uk": "штурмова гвинтівка", "ro": "pușcă de asalt",
+        "nl": "aanvalsgeweer", "hr": "jurišna puška", "tr": "taarruz tüfeği",
+        "hu": "gépkarabély", "el": "τυφέκιο εφόδου", "cs": "útočná puška",
+        "sv": "automatkarbiner", "ca": "fusell d'assalt", "bg": "щурмова пушка",
+        "da": "stormgevær",
+    },
+    "non-blowback": {
+        "es": "non-blowback (NBB)", "de": "Non-Blowback (NBB)",
+        "fr": "non-blowback (NBB)", "it": "non-blowback (NBB)",
+        "pt": "non-blowback (NBB)", "ru": "без блоубэка (NBB)",
+        "pl": "non-blowback (NBB)", "uk": "без блоубеку (NBB)",
+        "ro": "non-blowback (NBB)", "nl": "non-blowback (NBB)",
+        "hr": "non-blowback (NBB)", "tr": "geri tepmesiz (NBB)",
+        "hu": "non-blowback (NBB)", "el": "non-blowback (NBB)",
+        "cs": "non-blowback (NBB)", "sv": "non-blowback (NBB)",
+        "ca": "non-blowback (NBB)", "bg": "без блоубек (NBB)",
+        "da": "non-blowback (NBB)",
+    },
 
     # ══════════════════════════════════════════════════════════════
     # PROPULSION / POWER
@@ -865,6 +914,38 @@ GLOSSARY = {
         "sv": "tracer BBs", "ca": "BBs traçadores", "bg": "трасиращи BBта",
         "da": "tracer BBs",
     },
+    "grenade": {
+        "es": "granada", "de": "Granate", "fr": "grenade", "it": "granata",
+        "pt": "granada", "ru": "граната", "pl": "granat", "uk": "граната",
+        "ro": "grenadă", "nl": "granaat", "hr": "granata", "tr": "el bombası",
+        "hu": "gránát", "el": "χειροβομβίδα", "cs": "granát", "sv": "granat",
+        "ca": "granada", "bg": "граната", "da": "granat",
+    },
+    "lubricant": {
+        "es": "lubricante", "de": "Schmiermittel", "fr": "lubrifiant", "it": "lubrificante",
+        "pt": "lubrificante", "ru": "смазка", "pl": "smar", "uk": "мастило",
+        "ro": "lubrifiant", "nl": "smeermiddel", "hr": "mazivo", "tr": "yağlayıcı",
+        "hu": "kenőanyag", "el": "λιπαντικό", "cs": "mazivo", "sv": "smörjmedel",
+        "ca": "lubricant", "bg": "смазка", "da": "smøremiddel",
+    },
+    "silicone oil": {
+        "es": "aceite de silicona", "de": "Silikonöl", "fr": "huile de silicone",
+        "it": "olio siliconico", "pt": "óleo de silicone", "ru": "силиконовое масло",
+        "pl": "olej silikonowy", "uk": "силіконове масло", "ro": "ulei de silicon",
+        "nl": "siliconolie", "hr": "silikonsko ulje", "tr": "silikon yağı",
+        "hu": "szilikonolaj", "el": "σιλικονέλαιο", "cs": "silikonový olej",
+        "sv": "silikonolja", "ca": "oli de silicona", "bg": "силиконово масло",
+        "da": "silikoneolie",
+    },
+    "spray paint": {
+        "es": "pintura en spray", "de": "Sprühfarbe", "fr": "peinture en spray",
+        "it": "vernice spray", "pt": "tinta spray", "ru": "аэрозольная краска",
+        "pl": "farba w sprayu", "uk": "аерозольна фарба", "ro": "vopsea spray",
+        "nl": "spuitverf", "hr": "boja u spreju", "tr": "sprey boya",
+        "hu": "festékspray", "el": "σπρέι βαφής", "cs": "barva ve spreji",
+        "sv": "sprayfärg", "ca": "pintura en esprai", "bg": "спрей боя",
+        "da": "spraymaling",
+    },
 
     # ══════════════════════════════════════════════════════════════
     # OPTICS & ACCESSORIES
@@ -915,6 +996,113 @@ GLOSSARY = {
         "sv": "taktisk ficklampa", "ca": "llanterna tàctica", "bg": "тактическо фенерче",
         "da": "taktisk lommelygte",
     },
+    "magnifier": {
+        "es": "magnificador", "de": "Vergrößerungsglas", "fr": "magnifier",
+        "it": "moltiplicatore", "pt": "magnificador", "ru": "магнифайер",
+        "pl": "powiększalnik", "uk": "магніфаєр", "ro": "magnificator",
+        "nl": "vergroter", "hr": "povećalo", "tr": "büyüteç",
+        "hu": "nagyító", "el": "μεγεθυντής", "cs": "zvětšovák",
+        "sv": "förstorare", "ca": "magnificador", "bg": "магнифайер",
+        "da": "forstørrer",
+    },
+    "scope mount": {
+        "es": "montura de óptica", "de": "Zielfernrohrmontage", "fr": "montage de lunette",
+        "it": "montaggio ottica", "pt": "montagem de luneta", "ru": "крепление прицела",
+        "pl": "montaż lunety", "uk": "кріплення прицілу", "ro": "montură lunetă",
+        "nl": "richtkijkermontage", "hr": "nosač optike", "tr": "dürbün montajı",
+        "hu": "távcsőszerelék", "el": "βάση σκοπευτικού", "cs": "montáž puškohledu",
+        "sv": "kikarsiktesmontage", "ca": "muntura d'òptica", "bg": "монтаж на прицел",
+        "da": "kikkertmontering",
+    },
+    "scope rings": {
+        "es": "anillas de óptica", "de": "Zielfernrohrringe", "fr": "anneaux de lunette",
+        "it": "anelli per ottica", "pt": "anéis de luneta", "ru": "кольца для прицела",
+        "pl": "pierścienie lunety", "uk": "кільця для прицілу", "ro": "inele lunetă",
+        "nl": "richtkijkerringen", "hr": "prstenovi optike", "tr": "dürbün halkaları",
+        "hu": "távcsőgyűrűk", "el": "δαχτυλίδια σκοπευτικού", "cs": "kroužky puškohledu",
+        "sv": "kikarsiktesringar", "ca": "anelles d'òptica", "bg": "пръстени за прицел",
+        "da": "kikkertringe",
+    },
+    "laser sight": {
+        "es": "láser táctico", "de": "Laservisier", "fr": "viseur laser",
+        "it": "puntatore laser", "pt": "mira laser", "ru": "лазерный прицел",
+        "pl": "celownik laserowy", "uk": "лазерний приціл", "ro": "laser tactic",
+        "nl": "laservizier", "hr": "laserski nišan", "tr": "lazer nişangah",
+        "hu": "lézeres irányzék", "el": "σκοπευτικό λέιζερ", "cs": "laserový zaměřovač",
+        "sv": "lasersikte", "ca": "visor làser", "bg": "лазерен прицел",
+        "da": "lasersigte",
+    },
+    "PEQ box": {
+        "es": "PEQ box", "de": "PEQ-Box", "fr": "boîtier PEQ",
+        "it": "PEQ box", "pt": "PEQ box", "ru": "блок PEQ",
+        "pl": "PEQ box", "uk": "блок PEQ", "ro": "PEQ box",
+        "nl": "PEQ box", "hr": "PEQ kutija", "tr": "PEQ kutusu",
+        "hu": "PEQ doboz", "el": "PEQ box", "cs": "PEQ box",
+        "sv": "PEQ-box", "ca": "PEQ box", "bg": "PEQ кутия",
+        "da": "PEQ-boks",
+    },
+    "pressure switch": {
+        "es": "pulsador remoto", "de": "Druckschalter", "fr": "interrupteur déporté",
+        "it": "pressostato remoto", "pt": "interruptor de pressão",
+        "ru": "выносная кнопка", "pl": "włącznik naciskowy",
+        "uk": "виносна кнопка", "ro": "întrerupător cu presiune",
+        "nl": "drukschakelaar", "hr": "prekidač na pritisak", "tr": "basınç anahtarı",
+        "hu": "nyomókapcsoló", "el": "διακόπτης πίεσης", "cs": "tlačítkový spínač",
+        "sv": "tryckbrytare", "ca": "polsador remot", "bg": "бутон за натиск",
+        "da": "trykknap",
+    },
+    "lens protector": {
+        "es": "protector de lente", "de": "Linsenschutz", "fr": "protège-lentille",
+        "it": "protezione lente", "pt": "protetor de lente", "ru": "защита линзы",
+        "pl": "osłona soczewki", "uk": "захист лінзи", "ro": "protecție lentilă",
+        "nl": "lensbeschermer", "hr": "zaštita leće", "tr": "lens koruyucu",
+        "hu": "lencse védő", "el": "προστατευτικό φακού", "cs": "ochrana čočky",
+        "sv": "linsskydd", "ca": "protector de lent", "bg": "предпазител за леща",
+        "da": "linsebeskytter",
+    },
+    "scope riser": {
+        "es": "elevador de óptica", "de": "Zielfernrohrerhöhung", "fr": "rehausse de lunette",
+        "it": "rialzo per ottica", "pt": "elevador de luneta", "ru": "подъёмник прицела",
+        "pl": "podwyższenie lunety", "uk": "підвищувач прицілу", "ro": "ridicător lunetă",
+        "nl": "richtkijkerverhoger", "hr": "podizač optike", "tr": "dürbün yükseltici",
+        "hu": "távcsőemelő", "el": "ανυψωτής σκοπευτικού", "cs": "zvýšení puškohledu",
+        "sv": "kikarsiktesförhöjare", "ca": "elevador d'òptica", "bg": "повдигач за прицел",
+        "da": "kikkertforhøjer",
+    },
+
+    # ══════════════════════════════════════════════════════════════
+    # RAIL SYSTEMS
+    # ══════════════════════════════════════════════════════════════
+
+    "picatinny": {
+        "es": "picatinny", "de": "Picatinny", "fr": "picatinny", "it": "picatinny",
+        "pt": "picatinny", "ru": "планка Пикатинни", "pl": "picatinny",
+        "uk": "планка Пікатінні", "ro": "picatinny", "nl": "picatinny",
+        "hr": "picatinny", "tr": "picatinny", "hu": "picatinny",
+        "el": "picatinny", "cs": "picatinny", "sv": "picatinny",
+        "ca": "picatinny", "bg": "пикатини", "da": "picatinny",
+    },
+    "M-LOK": {
+        "es": "M-LOK", "de": "M-LOK", "fr": "M-LOK", "it": "M-LOK",
+        "pt": "M-LOK", "ru": "M-LOK", "pl": "M-LOK", "uk": "M-LOK",
+        "ro": "M-LOK", "nl": "M-LOK", "hr": "M-LOK", "tr": "M-LOK",
+        "hu": "M-LOK", "el": "M-LOK", "cs": "M-LOK", "sv": "M-LOK",
+        "ca": "M-LOK", "bg": "M-LOK", "da": "M-LOK",
+    },
+    "keymod": {
+        "es": "keymod", "de": "KeyMod", "fr": "keymod", "it": "keymod",
+        "pt": "keymod", "ru": "KeyMod", "pl": "keymod", "uk": "KeyMod",
+        "ro": "keymod", "nl": "keymod", "hr": "keymod", "tr": "keymod",
+        "hu": "keymod", "el": "keymod", "cs": "keymod", "sv": "keymod",
+        "ca": "keymod", "bg": "KeyMod", "da": "keymod",
+    },
+    "MOLLE": {
+        "es": "MOLLE", "de": "MOLLE", "fr": "MOLLE", "it": "MOLLE",
+        "pt": "MOLLE", "ru": "MOLLE", "pl": "MOLLE", "uk": "MOLLE",
+        "ro": "MOLLE", "nl": "MOLLE", "hr": "MOLLE", "tr": "MOLLE",
+        "hu": "MOLLE", "el": "MOLLE", "cs": "MOLLE", "sv": "MOLLE",
+        "ca": "MOLLE", "bg": "MOLLE", "da": "MOLLE",
+    },
 
     # ══════════════════════════════════════════════════════════════
     # TACTICAL GEAR
@@ -960,6 +1148,92 @@ GLOSSARY = {
         "ro": "cască", "nl": "helm", "hr": "kaciga", "tr": "kask",
         "hu": "sisak", "el": "κράνος", "cs": "helma", "sv": "hjälm",
         "ca": "casc", "bg": "шлем", "da": "hjelm",
+    },
+    "chest rig": {
+        "es": "chest rig", "de": "Chest Rig", "fr": "chest rig",
+        "it": "chest rig", "pt": "chest rig", "ru": "чест риг",
+        "pl": "chest rig", "uk": "чест ріг", "ro": "chest rig",
+        "nl": "chest rig", "hr": "chest rig", "tr": "göğüs teçhizatı",
+        "hu": "chest rig", "el": "chest rig", "cs": "chest rig",
+        "sv": "chest rig", "ca": "chest rig", "bg": "чест риг",
+        "da": "chest rig",
+    },
+    "pouch": {
+        "es": "bolsillo táctico", "de": "Tasche", "fr": "pochette tactique",
+        "it": "tasca tattica", "pt": "bolso tático", "ru": "подсумок",
+        "pl": "ładownica", "uk": "підсумок", "ro": "buzunar tactic",
+        "nl": "tactische tas", "hr": "torbica", "tr": "cep", "hu": "táska",
+        "el": "τακτική θήκη", "cs": "sumka", "sv": "taktisk ficka",
+        "ca": "butxaca tàctica", "bg": "тактически джоб", "da": "taktisk lomme",
+    },
+    "dump pouch": {
+        "es": "bolsa de descarga", "de": "Dump Pouch", "fr": "pochette de vidage",
+        "it": "dump pouch", "pt": "bolsa de descarga", "ru": "сбросной подсумок",
+        "pl": "ładownica zrzutowa", "uk": "скидний підсумок", "ro": "buzunar de descărcare",
+        "nl": "dump pouch", "hr": "torbica za prazne spremnike", "tr": "boşaltma cebi",
+        "hu": "dump pouch", "el": "θήκη απόρριψης", "cs": "vyhazovací sumka",
+        "sv": "dump pouch", "ca": "bossa de descàrrega", "bg": "контейнер за изхвърляне",
+        "da": "dump pouch",
+    },
+    "tactical belt": {
+        "es": "cinturón táctico", "de": "taktischer Gürtel", "fr": "ceinture tactique",
+        "it": "cintura tattica", "pt": "cinto tático", "ru": "тактический пояс",
+        "pl": "pas taktyczny", "uk": "тактичний пояс", "ro": "centură tactică",
+        "nl": "tactische riem", "hr": "taktički pojas", "tr": "taktik kemer",
+        "hu": "taktikai öv", "el": "τακτική ζώνη", "cs": "taktický opasek",
+        "sv": "taktiskt bälte", "ca": "cinturó tàctic", "bg": "тактически колан",
+        "da": "taktisk bælte",
+    },
+    "gun bag": {
+        "es": "bolsa para réplica", "de": "Waffentasche", "fr": "housse de transport",
+        "it": "sacca per replica", "pt": "bolsa para réplica", "ru": "чехол для оружия",
+        "pl": "pokrowiec na replikę", "uk": "чохол для репліки", "ro": "geantă pentru replică",
+        "nl": "wapentas", "hr": "torba za repliku", "tr": "silah çantası",
+        "hu": "fegyvertáska", "el": "θήκη όπλου", "cs": "obal na zbraň",
+        "sv": "vapenfodral", "ca": "bossa per a rèplica", "bg": "чанта за оръжие",
+        "da": "våbentaske",
+    },
+    "tactical pants": {
+        "es": "pantalones tácticos", "de": "taktische Hose", "fr": "pantalon tactique",
+        "it": "pantaloni tattici", "pt": "calças táticas", "ru": "тактические штаны",
+        "pl": "spodnie taktyczne", "uk": "тактичні штани", "ro": "pantaloni tactici",
+        "nl": "tactische broek", "hr": "taktičke hlače", "tr": "taktik pantolon",
+        "hu": "taktikai nadrág", "el": "τακτικό παντελόνι", "cs": "taktické kalhoty",
+        "sv": "taktiska byxor", "ca": "pantalons tàctics", "bg": "тактически панталони",
+        "da": "taktiske bukser",
+    },
+    "gloves": {
+        "es": "guantes", "de": "Handschuhe", "fr": "gants", "it": "guanti",
+        "pt": "luvas", "ru": "перчатки", "pl": "rękawice", "uk": "рукавиці",
+        "ro": "mănuși", "nl": "handschoenen", "hr": "rukavice", "tr": "eldiven",
+        "hu": "kesztyű", "el": "γάντια", "cs": "rukavice", "sv": "handskar",
+        "ca": "guants", "bg": "ръкавици", "da": "handsker",
+    },
+    "knee pads": {
+        "es": "rodilleras", "de": "Knieschoner", "fr": "genouillères",
+        "it": "ginocchiere", "pt": "joelheiras", "ru": "наколенники",
+        "pl": "nakolanniki", "uk": "наколінники", "ro": "genunchiere",
+        "nl": "kniebeschermers", "hr": "štitnici za koljena", "tr": "dizlik",
+        "hu": "térdvédő", "el": "επιγονατίδες", "cs": "kolenní chrániče",
+        "sv": "knäskydd", "ca": "genolleres", "bg": "наколенки",
+        "da": "knæbeskyttere",
+    },
+    "hydration pack": {
+        "es": "mochila de hidratación", "de": "Trinkrucksack", "fr": "sac d'hydratation",
+        "it": "zaino idratazione", "pt": "mochila de hidratação",
+        "ru": "гидратор", "pl": "plecak hydracyjny", "uk": "гідратор",
+        "ro": "rucsac de hidratare", "nl": "drinkrugzak", "hr": "hidracijski ruksak",
+        "tr": "hidrasyon çantası", "hu": "hidrációs hátizsák",
+        "el": "σακίδιο ενυδάτωσης", "cs": "hydratační batoh",
+        "sv": "vätskeryggsäck", "ca": "motxilla d'hidratació", "bg": "хидратираща раница",
+        "da": "drikkepose",
+    },
+    "patch": {
+        "es": "parche", "de": "Patch", "fr": "écusson", "it": "toppa",
+        "pt": "patch", "ru": "патч", "pl": "naszywka", "uk": "патч",
+        "ro": "ecuson", "nl": "patch", "hr": "zakrpa", "tr": "yama",
+        "hu": "felvarró", "el": "σήμα", "cs": "nášivka", "sv": "emblem",
+        "ca": "pedaç", "bg": "нашивка", "da": "patch",
     },
 
     # ══════════════════════════════════════════════════════════════
@@ -1069,6 +1343,103 @@ GLOSSARY = {
     },
 
     # ══════════════════════════════════════════════════════════════
+    # CAMOUFLAGE
+    # ══════════════════════════════════════════════════════════════
+
+    "ghillie suit": {
+        "es": "traje ghillie", "de": "Ghillie-Anzug", "fr": "tenue ghillie",
+        "it": "tuta ghillie", "pt": "traje ghillie", "ru": "маскировочный костюм",
+        "pl": "kombinezon ghillie", "uk": "маскувальний костюм", "ro": "costum ghillie",
+        "nl": "ghillie pak", "hr": "ghillie odijelo", "tr": "ghillie elbise",
+        "hu": "ghillie ruha", "el": "στολή ghillie", "cs": "maskovací oblek ghillie",
+        "sv": "ghilliedräkt", "ca": "vestit ghillie", "bg": "маскировъчен костюм",
+        "da": "ghillie dragt",
+    },
+    "camouflage": {
+        "es": "camuflaje", "de": "Tarnung", "fr": "camouflage", "it": "mimetizzazione",
+        "pt": "camuflagem", "ru": "камуфляж", "pl": "kamuflaż", "uk": "камуфляж",
+        "ro": "camuflaj", "nl": "camouflage", "hr": "kamuflažа", "tr": "kamuflaj",
+        "hu": "álcázás", "el": "καμουφλάζ", "cs": "maskování", "sv": "kamouflage",
+        "ca": "camuflatge", "bg": "камуфлаж", "da": "camouflage",
+    },
+    "face paint": {
+        "es": "pintura facial de camuflaje", "de": "Tarnschminke",
+        "fr": "peinture de camouflage", "it": "trucco mimetico",
+        "pt": "tinta facial de camuflagem", "ru": "маскировочная краска",
+        "pl": "farba maskująca", "uk": "маскувальна фарба", "ro": "vopsea de camuflaj",
+        "nl": "camouflageverf", "hr": "kamuflažna boja za lice", "tr": "kamuflaj boyası",
+        "hu": "álcázó festék", "el": "βαφή καμουφλάζ", "cs": "maskovací barva",
+        "sv": "kamouflagefärg", "ca": "pintura facial de camuflatge",
+        "bg": "камуфлажна боя", "da": "camouflagemaling",
+    },
+    "camo tape": {
+        "es": "cinta de camuflaje", "de": "Tarnband", "fr": "bande de camouflage",
+        "it": "nastro mimetico", "pt": "fita de camuflagem", "ru": "камуфляжная лента",
+        "pl": "taśma maskująca", "uk": "камуфляжна стрічка", "ro": "bandă de camuflaj",
+        "nl": "camouflagetape", "hr": "kamuflažna traka", "tr": "kamuflaj bandı",
+        "hu": "álcázó szalag", "el": "ταινία καμουφλάζ", "cs": "maskovací páska",
+        "sv": "kamouflagetejp", "ca": "cinta de camuflatge", "bg": "камуфлажна лента",
+        "da": "camouflagetape",
+    },
+
+    # ══════════════════════════════════════════════════════════════
+    # COMMUNICATIONS
+    # ══════════════════════════════════════════════════════════════
+
+    "radio": {
+        "es": "radio", "de": "Funkgerät", "fr": "radio", "it": "radio",
+        "pt": "rádio", "ru": "рация", "pl": "radio", "uk": "рація",
+        "ro": "stație radio", "nl": "portofoon", "hr": "radio", "tr": "telsiz",
+        "hu": "rádió", "el": "ασύρματος", "cs": "vysílačka", "sv": "radio",
+        "ca": "ràdio", "bg": "радиостанция", "da": "radio",
+    },
+    "headset": {
+        "es": "auriculares tácticos", "de": "taktisches Headset", "fr": "casque audio tactique",
+        "it": "cuffie tattiche", "pt": "headset tático", "ru": "тактическая гарнитура",
+        "pl": "słuchawki taktyczne", "uk": "тактична гарнітура", "ro": "cască audio tactică",
+        "nl": "tactische headset", "hr": "taktičke slušalice", "tr": "taktik kulaklık",
+        "hu": "taktikai headset", "el": "τακτικά ακουστικά", "cs": "taktický headset",
+        "sv": "taktiskt headset", "ca": "auriculars tàctics", "bg": "тактически слушалки",
+        "da": "taktisk headset",
+    },
+    "PTT": {
+        "es": "PTT (pulsar para hablar)", "de": "PTT (Push-to-Talk)",
+        "fr": "PTT (push-to-talk)", "it": "PTT (push-to-talk)",
+        "pt": "PTT (apertar para falar)", "ru": "PTT (тангента)",
+        "pl": "PTT (push-to-talk)", "uk": "PTT (тангента)",
+        "ro": "PTT (push-to-talk)", "nl": "PTT (push-to-talk)",
+        "hr": "PTT (pritisni za govor)", "tr": "PTT (bas-konuş)",
+        "hu": "PTT (push-to-talk)", "el": "PTT (push-to-talk)",
+        "cs": "PTT (push-to-talk)", "sv": "PTT (push-to-talk)",
+        "ca": "PTT (prémer per parlar)", "bg": "PTT (натисни за говорене)",
+        "da": "PTT (tryk-for-at-tale)",
+    },
+
+    # ══════════════════════════════════════════════════════════════
+    # NIGHT VISION & THERMAL
+    # ══════════════════════════════════════════════════════════════
+
+    "night vision goggles": {
+        "es": "gafas de visión nocturna", "de": "Nachtsichtgerät",
+        "fr": "lunettes de vision nocturne", "it": "visore notturno",
+        "pt": "óculos de visão noturna", "ru": "прибор ночного видения",
+        "pl": "noktowizor", "uk": "прилад нічного бачення", "ro": "dispozitiv de vedere nocturnă",
+        "nl": "nachtkijker", "hr": "noćni vid", "tr": "gece görüş gözlüğü",
+        "hu": "éjjellátó", "el": "συσκευή νυχτερινής όρασης", "cs": "noktovizor",
+        "sv": "mörkersikte", "ca": "ulleres de visió nocturna",
+        "bg": "уред за нощно виждане", "da": "natsynsbriller",
+    },
+    "thermal sight": {
+        "es": "visor térmico", "de": "Wärmebildgerät", "fr": "viseur thermique",
+        "it": "visore termico", "pt": "mira térmica", "ru": "тепловизор",
+        "pl": "termowizor", "uk": "тепловізор", "ro": "vizor termic",
+        "nl": "warmtebeeldkijker", "hr": "termovizija", "tr": "termal nişangah",
+        "hu": "hőkamera", "el": "θερμική κάμερα", "cs": "termovize",
+        "sv": "värmekamera", "ca": "visor tèrmic", "bg": "термовизор",
+        "da": "termisk sigte",
+    },
+
+    # ══════════════════════════════════════════════════════════════
     # MATERIALS
     # ══════════════════════════════════════════════════════════════
 
@@ -1156,6 +1527,32 @@ GLOSSARY = {
         "ro": "cablaj", "nl": "bedrading", "hr": "kabliranje", "tr": "kablolama",
         "hu": "kábelezés", "el": "καλωδίωση", "cs": "kabeláž", "sv": "kabeldragning",
         "ca": "cablejat", "bg": "окабеляване", "da": "ledningsføring",
+    },
+
+    # ══════════════════════════════════════════════════════════════
+    # CONNECTORS
+    # ══════════════════════════════════════════════════════════════
+
+    "Deans connector": {
+        "es": "conector Deans (T-plug)", "de": "Deans-Stecker (T-Plug)",
+        "fr": "connecteur Deans (T-plug)", "it": "connettore Deans (T-plug)",
+        "pt": "conector Deans (T-plug)", "ru": "разъём Deans (T-plug)",
+        "pl": "złącze Deans (T-plug)", "uk": "роз'єм Deans (T-plug)",
+        "ro": "conector Deans (T-plug)", "nl": "Deans-connector (T-plug)",
+        "hr": "Deans konektor (T-plug)", "tr": "Deans konektör (T-fiş)",
+        "hu": "Deans csatlakozó (T-plug)", "el": "σύνδεσμος Deans (T-plug)",
+        "cs": "konektor Deans (T-plug)", "sv": "Deans-kontakt (T-plug)",
+        "ca": "connector Deans (T-plug)", "bg": "конектор Deans (T-plug)",
+        "da": "Deans-stik (T-plug)",
+    },
+    "Tamiya connector": {
+        "es": "conector Tamiya", "de": "Tamiya-Stecker", "fr": "connecteur Tamiya",
+        "it": "connettore Tamiya", "pt": "conector Tamiya", "ru": "разъём Tamiya",
+        "pl": "złącze Tamiya", "uk": "роз'єм Tamiya", "ro": "conector Tamiya",
+        "nl": "Tamiya-connector", "hr": "Tamiya konektor", "tr": "Tamiya konektör",
+        "hu": "Tamiya csatlakozó", "el": "σύνδεσμος Tamiya", "cs": "konektor Tamiya",
+        "sv": "Tamiya-kontakt", "ca": "connector Tamiya", "bg": "конектор Tamiya",
+        "da": "Tamiya-stik",
     },
 }
 

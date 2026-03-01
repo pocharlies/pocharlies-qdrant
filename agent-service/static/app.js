@@ -13,26 +13,30 @@
 // State
 // -----------------------------------------------------------
 
-const state = {
+var state = {
     ws: null,
     threadId: null,
     threads: [],            // [{id, name, lastMessage}]
-    threadMessages: {},     // threadId → DocumentFragment (saved DOM nodes)
+    threadHistory: {},      // threadId → [{type, role, content, ...}]
     connected: false,
-    currentAssistantEl: null, // streaming target element
+    currentAssistantEl: null,
 };
 
 // -----------------------------------------------------------
 // DOM references
 // -----------------------------------------------------------
 
-const $messages     = document.getElementById("messages");
-const $input        = document.getElementById("message-input");
-const $sendBtn      = document.getElementById("send-btn");
-const $newThreadBtn = document.getElementById("new-thread-btn");
-const $threadList   = document.getElementById("thread-list");
-const $statusDot    = document.getElementById("status-indicator");
-const $statusText   = document.getElementById("status-text");
+var $messages     = document.getElementById("messages");
+var $input        = document.getElementById("message-input");
+var $sendBtn      = document.getElementById("send-btn");
+var $newThreadBtn = document.getElementById("new-thread-btn");
+var $threadList   = document.getElementById("thread-list");
+var $statusDot    = document.getElementById("status-indicator");
+var $statusText   = document.getElementById("status-text");
+var $helpBtn      = document.getElementById("help-btn");
+var $helpOverlay  = document.getElementById("help-overlay");
+var $helpPopup    = document.getElementById("help-popup");
+var $helpCloseBtn = document.getElementById("help-close-btn");
 
 // -----------------------------------------------------------
 // Utilities
@@ -42,7 +46,6 @@ function generateId() {
     if (typeof crypto !== "undefined" && crypto.randomUUID) {
         return crypto.randomUUID();
     }
-    // Fallback for older browsers
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
         var r = (Math.random() * 16) | 0;
         var v = c === "x" ? r : (r & 0x3) | 0x8;
@@ -58,6 +61,41 @@ function scrollToBottom() {
     requestAnimationFrame(function () {
         $messages.scrollTop = $messages.scrollHeight;
     });
+}
+
+// -----------------------------------------------------------
+// LocalStorage persistence
+// -----------------------------------------------------------
+
+var STORAGE_KEY = "pocharlies_threads";
+
+function saveToStorage() {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            threads: state.threads,
+            history: state.threadHistory,
+            activeThread: state.threadId,
+        }));
+    } catch (e) {
+        // Storage full or unavailable
+    }
+}
+
+function loadFromStorage() {
+    try {
+        var raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return false;
+        var data = JSON.parse(raw);
+        if (data.threads && Array.isArray(data.threads)) {
+            state.threads = data.threads;
+            state.threadHistory = data.history || {};
+            state.threadId = data.activeThread || null;
+            return true;
+        }
+    } catch (e) {
+        // Corrupt data — start fresh
+    }
+    return false;
 }
 
 // -----------------------------------------------------------
@@ -95,7 +133,6 @@ function connect() {
     ws.addEventListener("close", function () {
         updateStatus(false);
         state.ws = null;
-        // Auto-reconnect after 3 seconds
         setTimeout(connect, 3000);
     });
 
@@ -159,10 +196,33 @@ function handleServerMessage(data) {
 }
 
 // -----------------------------------------------------------
+// History helpers — record every event in the data model
+// -----------------------------------------------------------
+
+function getHistory() {
+    if (!state.threadId) return [];
+    if (!state.threadHistory[state.threadId]) {
+        state.threadHistory[state.threadId] = [];
+    }
+    return state.threadHistory[state.threadId];
+}
+
+function pushRecord(record) {
+    getHistory().push(record);
+    saveToStorage();
+}
+
+// -----------------------------------------------------------
 // Messages
 // -----------------------------------------------------------
 
 function addMessage(role, content) {
+    var ts = timestamp();
+    pushRecord({ type: "message", role: role, content: content, time: ts });
+    renderMessage(role, content, ts);
+}
+
+function renderMessage(role, content, ts) {
     var el = document.createElement("div");
     el.classList.add("message", role);
 
@@ -171,10 +231,10 @@ function addMessage(role, content) {
     textEl.textContent = content;
     el.appendChild(textEl);
 
-    var ts = document.createElement("span");
-    ts.classList.add("message-timestamp");
-    ts.textContent = timestamp();
-    el.appendChild(ts);
+    var tsEl = document.createElement("span");
+    tsEl.classList.add("message-timestamp");
+    tsEl.textContent = ts;
+    el.appendChild(tsEl);
 
     $messages.appendChild(el);
     scrollToBottom();
@@ -193,10 +253,10 @@ function startStreaming() {
     textEl.classList.add("message-text");
     el.appendChild(textEl);
 
-    var ts = document.createElement("span");
-    ts.classList.add("message-timestamp");
-    ts.textContent = timestamp();
-    el.appendChild(ts);
+    var tsEl = document.createElement("span");
+    tsEl.classList.add("message-timestamp");
+    tsEl.textContent = timestamp();
+    el.appendChild(tsEl);
 
     $messages.appendChild(el);
     state.currentAssistantEl = textEl;
@@ -212,13 +272,20 @@ function appendToken(token) {
 
 function finalizeStreaming() {
     if (state.currentAssistantEl) {
-        // Update the final content in the thread record
         var content = state.currentAssistantEl.textContent;
-        if (content && state.threadId) {
+        var tsEl = state.currentAssistantEl.parentElement
+            ? state.currentAssistantEl.parentElement.querySelector(".message-timestamp")
+            : null;
+        var timeStr = tsEl ? tsEl.textContent : timestamp();
+
+        if (content) {
+            pushRecord({ type: "message", role: "assistant", content: content, time: timeStr });
+
             var thread = state.threads.find(function (t) { return t.id === state.threadId; });
             if (thread) {
                 thread.lastMessage = content.slice(0, 80);
                 renderThreads();
+                saveToStorage();
             }
         }
     }
@@ -230,17 +297,22 @@ function finalizeStreaming() {
 // -----------------------------------------------------------
 
 function addToolCall(name, args) {
+    var argsStr = typeof args === "string" ? args : JSON.stringify(args, null, 2);
+    pushRecord({ type: "tool_call", name: name, args: argsStr });
+    renderToolCall(name, argsStr);
+}
+
+function renderToolCall(name, argsStr) {
     var el = document.createElement("div");
     el.classList.add("tool-call");
     el.setAttribute("data-tool-name", name);
 
-    // Header
     var header = document.createElement("div");
     header.classList.add("tool-call-header");
 
     var icon = document.createElement("span");
     icon.classList.add("tool-call-icon");
-    icon.textContent = "\u2699"; // gear symbol
+    icon.textContent = "\u2699";
     header.appendChild(icon);
 
     var nameEl = document.createElement("span");
@@ -250,12 +322,11 @@ function addToolCall(name, args) {
 
     var toggle = document.createElement("span");
     toggle.classList.add("tool-call-toggle");
-    toggle.textContent = "\u25B6"; // right-pointing triangle
+    toggle.textContent = "\u25B6";
     header.appendChild(toggle);
 
     el.appendChild(header);
 
-    // Body
     var body = document.createElement("div");
     body.classList.add("tool-call-body");
 
@@ -266,12 +337,11 @@ function addToolCall(name, args) {
 
     var argsContent = document.createElement("pre");
     argsContent.classList.add("tool-call-content");
-    argsContent.textContent = typeof args === "string" ? args : JSON.stringify(args, null, 2);
+    argsContent.textContent = argsStr;
     body.appendChild(argsContent);
 
     el.appendChild(body);
 
-    // Toggle expand/collapse
     header.addEventListener("click", function () {
         el.classList.toggle("expanded");
     });
@@ -281,13 +351,16 @@ function addToolCall(name, args) {
 }
 
 function updateToolResult(name, content) {
-    // Find the last tool-call element with matching name
+    pushRecord({ type: "tool_result", name: name, content: content });
+    renderToolResult(name, content);
+}
+
+function renderToolResult(name, content) {
     var toolCalls = $messages.querySelectorAll('.tool-call[data-tool-name="' + CSS.escape(name) + '"]');
     var target = toolCalls.length > 0 ? toolCalls[toolCalls.length - 1] : null;
 
     if (!target) {
-        // No matching tool call; create a standalone result
-        addToolCall(name, "");
+        renderToolCall(name, "");
         toolCalls = $messages.querySelectorAll('.tool-call[data-tool-name="' + CSS.escape(name) + '"]');
         target = toolCalls[toolCalls.length - 1];
     }
@@ -309,8 +382,6 @@ function updateToolResult(name, content) {
     resultDiv.appendChild(pre);
 
     body.appendChild(resultDiv);
-
-    // Auto-expand to show result
     target.classList.add("expanded");
     scrollToBottom();
 }
@@ -320,52 +391,75 @@ function updateToolResult(name, content) {
 // -----------------------------------------------------------
 
 function addInterrupt(data) {
+    var msg = data.message || "The agent is requesting approval to proceed.";
+    pushRecord({ type: "interrupt", message: msg, interrupt_id: data.interrupt_id || null });
+    renderInterrupt(msg, data.interrupt_id || null, false);
+}
+
+function renderInterrupt(message, interruptId, resolved) {
     var el = document.createElement("div");
     el.classList.add("interrupt");
 
     var text = document.createElement("div");
     text.classList.add("interrupt-text");
-    text.textContent = data.message || "The agent is requesting approval to proceed.";
+    text.textContent = message;
     el.appendChild(text);
 
-    var buttons = document.createElement("div");
-    buttons.classList.add("interrupt-buttons");
+    if (!resolved) {
+        var buttons = document.createElement("div");
+        buttons.classList.add("interrupt-buttons");
 
-    var approveBtn = document.createElement("button");
-    approveBtn.classList.add("btn-approve");
-    approveBtn.textContent = "Approve";
-    approveBtn.addEventListener("click", function () {
-        sendInterruptResponse("approve", data);
-        approveBtn.disabled = true;
-        rejectBtn.disabled = true;
-        text.textContent += " [Approved]";
-    });
-    buttons.appendChild(approveBtn);
+        var approveBtn = document.createElement("button");
+        approveBtn.classList.add("btn-approve");
+        approveBtn.textContent = "Approve";
+        approveBtn.addEventListener("click", function () {
+            sendInterruptResponse("approve", interruptId);
+            approveBtn.disabled = true;
+            rejectBtn.disabled = true;
+            text.textContent += " [Approved]";
+        });
+        buttons.appendChild(approveBtn);
 
-    var rejectBtn = document.createElement("button");
-    rejectBtn.classList.add("btn-reject");
-    rejectBtn.textContent = "Reject";
-    rejectBtn.addEventListener("click", function () {
-        sendInterruptResponse("reject", data);
-        approveBtn.disabled = true;
-        rejectBtn.disabled = true;
-        text.textContent += " [Rejected]";
-    });
-    buttons.appendChild(rejectBtn);
+        var rejectBtn = document.createElement("button");
+        rejectBtn.classList.add("btn-reject");
+        rejectBtn.textContent = "Reject";
+        rejectBtn.addEventListener("click", function () {
+            sendInterruptResponse("reject", interruptId);
+            approveBtn.disabled = true;
+            rejectBtn.disabled = true;
+            text.textContent += " [Rejected]";
+        });
+        buttons.appendChild(rejectBtn);
 
-    el.appendChild(buttons);
+        el.appendChild(buttons);
+    }
+
     $messages.appendChild(el);
     scrollToBottom();
 }
 
-function sendInterruptResponse(action, data) {
+function sendInterruptResponse(action, interruptId) {
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
     state.ws.send(JSON.stringify({
         type: "interrupt_response",
         action: action,
         thread_id: state.threadId,
-        interrupt_id: data.interrupt_id || null,
+        interrupt_id: interruptId,
     }));
+}
+
+// -----------------------------------------------------------
+// Help popup
+// -----------------------------------------------------------
+
+function openHelp() {
+    if ($helpOverlay) $helpOverlay.classList.remove("hidden");
+    if ($helpPopup) $helpPopup.classList.remove("hidden");
+}
+
+function closeHelp() {
+    if ($helpOverlay) $helpOverlay.classList.add("hidden");
+    if ($helpPopup) $helpPopup.classList.add("hidden");
 }
 
 // -----------------------------------------------------------
@@ -377,15 +471,14 @@ function send() {
     if (!content) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
 
-    // Ensure we have a thread
+    closeHelp();
+
     if (!state.threadId) {
         newThread(content);
     }
 
-    // Show user message
     addMessage("user", content);
 
-    // Update thread preview
     var thread = state.threads.find(function (t) { return t.id === state.threadId; });
     if (thread) {
         thread.lastMessage = content.slice(0, 80);
@@ -393,77 +486,78 @@ function send() {
             thread.name = content.slice(0, 40);
         }
         renderThreads();
+        saveToStorage();
     }
 
-    // Send over WebSocket
     state.ws.send(JSON.stringify({
         type: "message",
         content: content,
         thread_id: state.threadId,
     }));
 
-    // Clear input
     $input.value = "";
     autoResize();
 }
 
 // -----------------------------------------------------------
-// Thread management
+// Thread management (data-model based)
 // -----------------------------------------------------------
 
-function saveCurrentMessages() {
-    if (!state.threadId) return;
-    var frag = document.createDocumentFragment();
-    while ($messages.firstChild) {
-        frag.appendChild($messages.firstChild);
-    }
-    state.threadMessages[state.threadId] = frag;
-}
-
-function restoreMessages(threadId) {
-    // Clear current DOM
+function clearMessages() {
     while ($messages.firstChild) {
         $messages.removeChild($messages.firstChild);
     }
-    var saved = state.threadMessages[threadId];
-    if (saved) {
-        $messages.appendChild(saved);
-        // Fragment is now empty after appendChild, remove the key
-        delete state.threadMessages[threadId];
-        scrollToBottom();
+}
+
+function renderThreadHistory(threadId) {
+    clearMessages();
+    var history = state.threadHistory[threadId];
+    if (!history || history.length === 0) return;
+
+    for (var i = 0; i < history.length; i++) {
+        var rec = history[i];
+        switch (rec.type) {
+            case "message":
+                renderMessage(rec.role, rec.content, rec.time);
+                break;
+            case "tool_call":
+                renderToolCall(rec.name, rec.args);
+                break;
+            case "tool_result":
+                renderToolResult(rec.name, rec.content);
+                break;
+            case "interrupt":
+                renderInterrupt(rec.message, rec.interrupt_id, true);
+                break;
+        }
     }
+    scrollToBottom();
 }
 
 function newThread(firstMessage) {
-    // Save current thread messages before switching
-    saveCurrentMessages();
     var id = generateId();
     var name = firstMessage ? firstMessage.slice(0, 40) : "New thread";
     state.threadId = id;
     state.currentAssistantEl = null;
     state.threads.unshift({ id: id, name: name, lastMessage: "" });
-    // Clear messages for the new empty thread
-    while ($messages.firstChild) {
-        $messages.removeChild($messages.firstChild);
-    }
+    state.threadHistory[id] = [];
+    clearMessages();
     renderThreads();
+    saveToStorage();
     $input.focus();
 }
 
 function switchThread(id) {
     if (state.threadId === id) return;
-    // Save current thread messages
-    saveCurrentMessages();
     state.threadId = id;
     state.currentAssistantEl = null;
-    // Restore target thread messages
-    restoreMessages(id);
+    renderThreadHistory(id);
     renderThreads();
+    saveToStorage();
     $input.focus();
 }
 
 function updateCurrentThread() {
-    // Ensure the current thread_id exists in our list
     var exists = state.threads.some(function (t) { return t.id === state.threadId; });
     if (!exists && state.threadId) {
         state.threads.unshift({
@@ -472,11 +566,11 @@ function updateCurrentThread() {
             lastMessage: "",
         });
         renderThreads();
+        saveToStorage();
     }
 }
 
 function renderThreads() {
-    // Clear existing items
     while ($threadList.firstChild) {
         $threadList.removeChild($threadList.firstChild);
     }
@@ -519,7 +613,6 @@ function autoResize() {
 // Event listeners
 // -----------------------------------------------------------
 
-// Send on Enter (without Shift)
 $input.addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -527,15 +620,23 @@ $input.addEventListener("keydown", function (e) {
     }
 });
 
-// Auto-resize on input
 $input.addEventListener("input", autoResize);
-
-// Send button click
 $sendBtn.addEventListener("click", send);
+$newThreadBtn.addEventListener("click", function () { newThread(); });
 
-// New thread button
-$newThreadBtn.addEventListener("click", function () {
-    newThread();
+if ($helpBtn) $helpBtn.addEventListener("click", openHelp);
+if ($helpCloseBtn) $helpCloseBtn.addEventListener("click", closeHelp);
+if ($helpOverlay) $helpOverlay.addEventListener("click", closeHelp);
+
+document.querySelectorAll(".help-action").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+        var prompt = btn.getAttribute("data-prompt");
+        if (prompt) {
+            closeHelp();
+            $input.value = prompt;
+            send();
+        }
+    });
 });
 
 // -----------------------------------------------------------
@@ -543,6 +644,17 @@ $newThreadBtn.addEventListener("click", function () {
 // -----------------------------------------------------------
 
 (function init() {
-    newThread();
+    var restored = loadFromStorage();
+    if (restored && state.threads.length > 0) {
+        if (state.threadId) {
+            renderThreadHistory(state.threadId);
+        } else {
+            state.threadId = state.threads[0].id;
+            renderThreadHistory(state.threadId);
+        }
+        renderThreads();
+    } else {
+        newThread();
+    }
     connect();
 })();

@@ -4,12 +4,13 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from langchain_core.tools import StructuredTool
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from pydantic import BaseModel, Field, create_model
 
 from config import settings
 
@@ -80,11 +81,59 @@ class MCPServerConnection:
                 resolved[key] = value
         return resolved
 
+    @staticmethod
+    def _schema_to_pydantic(name: str, schema: dict) -> type[BaseModel]:
+        """Convert a JSON Schema (from MCP tool inputSchema) to a Pydantic model."""
+        properties = schema.get("properties", {})
+        required = set(schema.get("required", []))
+        field_definitions: dict[str, Any] = {}
+
+        type_map = {
+            "string": str,
+            "integer": int,
+            "number": float,
+            "boolean": bool,
+        }
+
+        for field_name, field_schema in properties.items():
+            json_type = field_schema.get("type", "string")
+            if json_type == "array":
+                py_type = list
+            elif json_type == "object":
+                py_type = dict
+            else:
+                py_type = type_map.get(json_type, str)
+
+            desc = field_schema.get("description", "")
+            default = field_schema.get("default")
+
+            if field_name in required:
+                field_definitions[field_name] = (py_type, Field(description=desc))
+            else:
+                field_definitions[field_name] = (
+                    Optional[py_type],
+                    Field(default=default, description=desc),
+                )
+
+        if not field_definitions:
+            field_definitions["placeholder_"] = (
+                Optional[str],
+                Field(default=None, description="unused"),
+            )
+
+        model_name = "".join(
+            part.capitalize() for part in name.replace("-", "_").split("_")
+        ) + "Input"
+        return create_model(model_name, **field_definitions)
+
     def _wrap_tool(self, tool_name: str, description: str, schema: dict) -> StructuredTool:
         namespaced = f"{self.name}__{tool_name}"
         session = self.session
+        args_model = self._schema_to_pydantic(namespaced, schema)
 
         async def _invoke(**kwargs: Any) -> str:
+            # Remove placeholder field if present
+            kwargs.pop("placeholder_", None)
             try:
                 result = await session.call_tool(tool_name, arguments=kwargs)
                 parts = []
@@ -101,6 +150,7 @@ class MCPServerConnection:
             coroutine=_invoke,
             name=namespaced,
             description=f"[{self.name}] {description}",
+            args_schema=args_model,
         )
 
     async def disconnect(self):

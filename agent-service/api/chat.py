@@ -4,7 +4,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("agent.api.chat")
@@ -88,6 +88,10 @@ async def chat_ws(websocket: WebSocket) -> None:
 
     Server streams frames with ``type`` in
     ``token | tool_call | tool_result | done | error``.
+
+    Uses ``astream(stream_mode="updates")`` instead of ``astream_events``
+    because the LLM does not support function calling in streaming mode.
+    Each node completion emits an update with the full messages produced.
     """
     await websocket.accept()
 
@@ -95,7 +99,6 @@ async def chat_ws(websocket: WebSocket) -> None:
         while True:
             data = await websocket.receive_json()
 
-            # Validate incoming message
             if data.get("type") != "message":
                 await websocket.send_json(
                     {"type": "error", "message": "Expected type 'message'"}
@@ -108,43 +111,38 @@ async def chat_ws(websocket: WebSocket) -> None:
             graph = websocket.app.state.supervisor
 
             try:
-                async for event in graph.astream_events(
+                async for event in graph.astream(
                     {"messages": [HumanMessage(content=content)]},
                     config={"configurable": {"thread_id": thread_id}},
-                    version="v2",
+                    stream_mode="updates",
                 ):
-                    kind = event.get("event")
+                    for node_name, updates in event.items():
+                        for msg in updates.get("messages", []):
+                            if isinstance(msg, AIMessage):
+                                # Send assistant text as a single token block
+                                text = msg.content if isinstance(msg.content, str) else ""
+                                if text:
+                                    await websocket.send_json(
+                                        {"type": "token", "content": text}
+                                    )
+                                # Send tool calls the model wants to make
+                                for tc in (msg.tool_calls or []):
+                                    await websocket.send_json(
+                                        {
+                                            "type": "tool_call",
+                                            "name": tc["name"],
+                                            "args": tc.get("args", {}),
+                                        }
+                                    )
+                            elif isinstance(msg, ToolMessage):
+                                await websocket.send_json(
+                                    {
+                                        "type": "tool_result",
+                                        "name": msg.name or "",
+                                        "content": str(msg.content),
+                                    }
+                                )
 
-                    if kind == "on_chat_model_stream":
-                        chunk = event["data"].get("chunk")
-                        if chunk and isinstance(chunk.content, str) and chunk.content:
-                            await websocket.send_json(
-                                {"type": "token", "content": chunk.content}
-                            )
-
-                    elif kind == "on_tool_start":
-                        await websocket.send_json(
-                            {
-                                "type": "tool_call",
-                                "name": event.get("name", ""),
-                                "args": event["data"].get("input", {}),
-                            }
-                        )
-
-                    elif kind == "on_tool_end":
-                        output = event["data"].get("output", "")
-                        # output may be a ToolMessage or a string; normalise
-                        if hasattr(output, "content"):
-                            output = output.content
-                        await websocket.send_json(
-                            {
-                                "type": "tool_result",
-                                "name": event.get("name", ""),
-                                "content": str(output),
-                            }
-                        )
-
-                # Signal that the agent turn is complete
                 await websocket.send_json(
                     {"type": "done", "thread_id": thread_id}
                 )

@@ -39,6 +39,13 @@ explain what you plan to do and ask for confirmation before proceeding
 - Be concise and direct
 - Use bullet points for lists
 - Include relevant numbers (pages crawled, products found, etc.)
+
+## Important rules
+- After calling a tool and receiving its result, summarize the result for the user. \
+Do NOT call the same tool again unless you need different parameters.
+- Limit yourself to at most 3 tool calls per user message. \
+After getting results, respond to the user with what you found.
+- Never loop: if a tool returns an error, explain the error to the user instead of retrying.
 """
 
 
@@ -76,6 +83,9 @@ def create_supervisor(
     builder.add_conditional_edges("supervisor", should_continue, ["tools", "__end__"])
     builder.add_edge("tools", "supervisor")
 
-    graph = builder.compile(checkpointer=checkpointer)
+    graph = builder.compile(
+        checkpointer=checkpointer,
+    )
+    graph.recursion_limit = 16  # max 8 tool-call rounds
     logger.info("Supervisor graph compiled with %d tools", len(tools))
     return graph

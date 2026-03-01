@@ -574,11 +574,20 @@ class TranslationPipeline:
         # Normalize FPS/m/s
         fps = result.get("fps")
         if fps and target_units == "metric":
-            result["velocity_ms"] = UNIT_CONVERSIONS["fps_to_ms"](fps)
+            try:
+                fps = float(fps)
+                result["fps"] = fps
+                result["velocity_ms"] = UNIT_CONVERSIONS["fps_to_ms"](fps)
+            except (ValueError, TypeError):
+                pass
 
         # Normalize weight
         weight = result.get("weight_grams")
         if weight and target_units == "metric":
+            try:
+                weight = float(weight)
+            except (ValueError, TypeError):
+                weight = 0
             if weight > 0:
                 result["weight_kg"] = round(weight / 1000, 2)
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pocharlies Agent</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
     <aside class="sidebar">
@@ -22,6 +22,40 @@
     </aside>
 
     <main class="chat-area">
+        <button id="help-btn" class="help-btn" title="Quick actions">?</button>
+        <div id="help-overlay" class="help-overlay hidden"></div>
+        <div id="help-popup" class="help-popup hidden">
+            <div class="help-popup-header">
+                <span class="help-popup-title">Quick Actions</span>
+                <button id="help-close-btn" class="help-close-btn">&times;</button>
+            </div>
+            <div class="help-popup-body">
+                <div class="help-group">
+                    <div class="help-group-label">Products</div>
+                    <button class="help-action" data-prompt="Search for AEG rifles under 200 euros">AEG rifles &lt; 200&euro;</button>
+                    <button class="help-action" data-prompt="Show product catalog statistics and top brands">Catalog stats</button>
+                    <button class="help-action" data-prompt="What Tokyo Marui products do we have in stock?">Tokyo Marui stock</button>
+                </div>
+                <div class="help-group">
+                    <div class="help-group-label">Competitors</div>
+                    <button class="help-action" data-prompt="List all indexed competitor sources and their product counts">Competitor sources</button>
+                    <button class="help-action" data-prompt="Compare our prices with airsoftzone.de">Compare prices</button>
+                    <button class="help-action" data-prompt="Crawl https://www.airsoftzone.de and index their products">Crawl competitor</button>
+                </div>
+                <div class="help-group">
+                    <div class="help-group-label">Web &amp; Knowledge</div>
+                    <button class="help-action" data-prompt="List all indexed web sources with page counts">Indexed sources</button>
+                    <button class="help-action" data-prompt="Search the knowledge base for airsoft battery types and compatibility">Battery guide</button>
+                    <button class="help-action" data-prompt="What collections exist in Qdrant and how many vectors does each have?">Collection stats</button>
+                </div>
+                <div class="help-group">
+                    <div class="help-group-label">Translation &amp; Tools</div>
+                    <button class="help-action" data-prompt="Translate 'pistola de airsoft de gas blowback con retroceso realista' to English, French, and German">Translate text</button>
+                    <button class="help-action" data-prompt="Check the health of all connected services and dependencies">System health</button>
+                    <button class="help-action" data-prompt="Sync products from Shopify and report what changed">Sync products</button>
+                </div>
+            </div>
+        </div>
         <div id="messages" class="messages"></div>
         <div class="input-area">
             <textarea
@@ -41,6 +75,6 @@
         </footer>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
 </body>
 </html>
