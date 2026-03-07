@@ -247,18 +247,10 @@ class ProductClassifier:
         )
 
         try:
-            loop = asyncio.get_event_loop()
-            models = await loop.run_in_executor(None, self.llm_client.models.list)
-            model_id = models.data[0].id if models.data else None
-
-            if not model_id:
-                logger.warning("No LLM model available for classification")
-                return []
-
             response = await loop.run_in_executor(
                 None,
                 lambda: self.llm_client.chat.completions.create(
-                    model=model_id,
+                    model="local",
                     messages=[
                         {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                         {"role": "user", "content": f"Extract products from these text passages:\n\n{combined}"},

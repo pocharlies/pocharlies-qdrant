@@ -67,7 +67,7 @@ webhook_handler: ShopifyWebhookHandler = None
 sync_state_store: SyncStateStore = None
 content_hash_store: ContentHashStore = None
 llm_client: OpenAI = None
-llm_model_id: str = None  # auto-discovered at startup
+LLM_MODEL = "local"
 rag_agent = None  # Agent SDK instance, created at startup
 redis_client = None  # Async Redis client for session persistence
 session_store: SessionStore = None
@@ -92,7 +92,7 @@ agent_tasks: Dict[str, AgentTask] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global web_indexer, competitor_indexer, llm_client, llm_model_id
+    global web_indexer, competitor_indexer, llm_client
     global product_indexer, catalog_indexer, product_classifier, translator
     global shopify_client, shopify_graphql_client, webhook_handler
     global sync_state_store, content_hash_store, rag_agent
@@ -131,17 +131,6 @@ async def lifespan(app: FastAPI):
         default_headers={"X-Source-Service": "pocharlies-rag"},
     )
 
-    # Auto-discover LLM model ID
-    try:
-        models = llm_client.models.list()
-        llm_model_id = models.data[0].id if models.data else None
-        if llm_model_id:
-            logger.info(f"LLM model discovered: {llm_model_id}")
-        else:
-            logger.warning("No LLM models available — chat/agent features will fail")
-    except Exception as e:
-        logger.warning(f"LLM model discovery failed: {e}")
-        llm_model_id = None
 
     # Shopify client (optional)
     if SHOPIFY_SHOP_DOMAIN and SHOPIFY_ACCESS_TOKEN:
@@ -247,7 +236,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Request/Response Models
 class ChatRequest(BaseModel):
     query: str
-    model: Optional[str] = None  # auto-discovered at startup
+    model: Optional[str] = None  # optional override; defaults to LLM_MODEL
     use_rag: bool = True
     use_tools: bool = True
     max_tokens: int = 4096
@@ -453,10 +442,7 @@ async def health():
 @app.post("/chat")
 async def chat_with_rag(request: ChatRequest):
     """Chat endpoint with RAG context injection and tool support."""
-    # Resolve model: use request model, or auto-discovered, or fail
-    model = request.model or llm_model_id
-    if not model:
-        raise HTTPException(status_code=503, detail="No LLM model available. Check LLM_BASE_URL configuration.")
+    model = request.model or LLM_MODEL
 
     messages = []
 
@@ -1643,15 +1629,7 @@ def _make_services(task: AgentTask = None) -> AgentServices:
 @app.get("/agent/status")
 async def agent_service_status():
     """Check if LLM is available for agent tasks."""
-    try:
-        models = llm_client.models.list()
-        model_id = models.data[0].id if models.data else None
-    except Exception:
-        model_id = None
-
-    if model_id:
-        return {"available": True, "model_id": model_id, "redis": redis_client is not None}
-    return {"available": False, "reason": "No LLM model available. Configure LLM_BASE_URL."}
+    return {"available": True, "model_id": LLM_MODEL, "redis": redis_client is not None}
 
 
 @app.post("/agent/task")

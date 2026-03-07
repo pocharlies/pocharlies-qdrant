@@ -686,14 +686,7 @@ Rules:
 - Return ONLY the JSON object, no explanation"""
 
         try:
-            # Discover active model (run in executor to avoid blocking event loop)
-            loop = asyncio.get_event_loop()
-            models = await loop.run_in_executor(None, llm_client.models.list)
-            model_id = models.data[0].id if models.data else None
-            if not model_id:
-                job.log("SMART: No LLM model available, skipping analysis")
-                return None
-
+            model_id = "local"
             job.log(f"SMART: Calling LLM ({model_id}) with {len(samples)} page samples...")
 
             # Run sync LLM call in thread pool to avoid blocking the event loop.

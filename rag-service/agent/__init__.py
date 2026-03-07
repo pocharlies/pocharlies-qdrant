@@ -162,14 +162,7 @@ def create_agent(vllm_base_url: str, api_key: str = "none") -> tuple:
         default_headers={"X-Source-Service": "pocharlies-rag:agent"},
     )
 
-    # Auto-discover model ID from vLLM
-    sync_client = OpenAI(base_url=vllm_base_url, api_key=api_key)
-    try:
-        models = sync_client.models.list()
-        model_id = models.data[0].id if models.data else "default"
-    except Exception as e:
-        logger.warning(f"Failed to discover model: {e}")
-        model_id = "default"
+    model_id = "local"
 
     agent = Agent(
         name="pocharlies-rag",
