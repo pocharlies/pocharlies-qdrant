@@ -329,23 +329,9 @@ class TranslationPipeline:
         self._model_id = model_id
 
     async def _get_model_id(self) -> str:
-        """Return cached model ID. Uses TRANSLATE_MODEL env var if set, else auto-discovers."""
-        if self._model_id:
-            return self._model_id
-        # Allow override via env var (e.g. "gpt-4o-mini-fallback" for LiteLLM routing)
-        env_model = os.environ.get("TRANSLATE_MODEL")
-        if env_model:
-            self._model_id = env_model
-            logger.info(f"Using TRANSLATE_MODEL from env: {env_model}")
-            return self._model_id
-        try:
-            loop = asyncio.get_event_loop()
-            models = await loop.run_in_executor(None, self.llm_client.models.list)
-            if not models.data:
-                raise RuntimeError("LLM returned no models — is vLLM running?")
-            self._model_id = models.data[0].id
-        except Exception as e:
-            raise RuntimeError(f"LLM model discovery failed (is DGX/vLLM running?): {e}") from e
+        """Return the LiteLLM model alias for translation."""
+        if not self._model_id:
+            self._model_id = "translation-model"
         return self._model_id
 
     async def translate_batch(

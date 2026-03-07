@@ -202,10 +202,7 @@ async def lifespan(app: FastAPI):
     if redis_client:
         custom_count = await glossary_store.load_all_pairs()
         logger.info(f"Glossary loaded: {len(GLOSSARY)} built-in terms × {len(SUPPORTED_LANGUAGES)} languages + {custom_count} custom entries")
-    # TRANSLATE_MODEL env var takes priority over auto-discovered model
-    translate_model_id = os.environ.get("TRANSLATE_MODEL") or llm_model_id
-    logger.info(f"Translation model: {translate_model_id} (env={'TRANSLATE_MODEL' if os.environ.get('TRANSLATE_MODEL') else 'auto-discovered'})")
-    translator = TranslationPipeline(llm_client=llm_client, glossary_store=glossary_store, model_id=translate_model_id)
+    translator = TranslationPipeline(llm_client=llm_client, glossary_store=glossary_store)
 
     # Pre-load BM25 sparse encoder so first search is fast
     try:
@@ -538,18 +535,13 @@ When answering:
     logger.info(f"Chat: query='{request.query[:60]}', model={model}, context={context_len} chars, has_rag={has_context}")
 
     try:
-        # GPT-5.x reasoning models require max_completion_tokens instead of max_tokens
-        is_reasoning_model = "gpt-5" in model.lower() or "o1" in model.lower() or "o3" in model.lower()
-        token_param = "max_completion_tokens" if is_reasoning_model else "max_tokens"
-
         call_kwargs = {
             "model": model,
             "messages": messages,
-            token_param: request.max_tokens,
+            "max_tokens": request.max_tokens,
+            "temperature": 0.2,
             "user": "rag:chat",
         }
-        if not is_reasoning_model:
-            call_kwargs["temperature"] = 0.2
 
         response = llm_client.chat.completions.create(**call_kwargs)
 
@@ -1119,11 +1111,76 @@ async def get_product_inventory(id_or_handle: str):
     return inventory
 
 
+# Spanish→English keyword map for cross-language page/guide search.
+# Guides are written in English; customer queries are often in Spanish.
+_ES_EN_KEYWORDS = {
+    "mejorar": "upgrade improve",
+    "mejora": "upgrade improvement",
+    "mejoras": "upgrades improvements",
+    "actualizar": "upgrade update",
+    "guia": "guide",
+    "guía": "guide",
+    "rendimiento": "performance",
+    "precisión": "accuracy precision",
+    "precision": "accuracy precision",
+    "alcance": "range",
+    "potencia": "power fps joules",
+    "silencioso": "silent quiet suppressor",
+    "silenciador": "suppressor",
+    "muelle": "spring",
+    "cañón": "barrel inner barrel",
+    "cañon": "barrel inner barrel",
+    "pistón": "piston",
+    "piston": "piston",
+    "cilindro": "cylinder",
+    "hop": "hop-up hop up",
+    "goma": "bucking rubber",
+    "gatillo": "trigger",
+    "cargador": "magazine",
+    "mira": "scope sight optic",
+    "visor": "scope sight optic",
+    "culata": "stock",
+    "pistola": "pistol handgun",
+    "fusil": "rifle",
+    "escopeta": "shotgun",
+    "francotirador": "sniper",
+    "mantenimiento": "maintenance",
+    "limpiar": "clean maintenance",
+    "desarmar": "disassemble",
+    "montar": "assemble install",
+    "instalar": "install installation",
+    "mejor": "best recommended",
+    "recomendar": "recommend",
+    "recomendación": "recommendation",
+    "comprar": "buy purchase",
+    "comparar": "compare comparison",
+    "diferencia": "difference versus",
+}
+
+
+def _augment_query_for_pages(query: str) -> str:
+    """Augment a (possibly Spanish) query with English keywords for page search."""
+    words = query.lower().split()
+    additions = set()
+    for w in words:
+        en = _ES_EN_KEYWORDS.get(w)
+        if en:
+            additions.update(en.split())
+    if not additions:
+        return query
+    return f"{query} {' '.join(additions)}"
+
+
 @app.post("/catalog/search")
 async def catalog_search(request: CatalogSearchRequest):
-    """Unified search across products, collections, and pages."""
+    """Unified search across products, collections, and pages.
+
+    Uses a balanced merge strategy: each type gets a guaranteed minimum
+    number of slots so that high-scoring products don't push out
+    relevant guide/page chunks.
+    """
     types = request.types or ["product", "collection", "page"]
-    all_results = []
+    results_by_type: dict[str, list] = {}
 
     if "product" in types:
         reranker = get_reranker()
@@ -1136,19 +1193,37 @@ async def catalog_search(request: CatalogSearchRequest):
         )
         if reranker and products:
             products = reranker.rerank(request.query, products, top_k=request.top_k)
-        all_results.extend(products)
+        results_by_type["product"] = products
 
     if "collection" in types and catalog_indexer:
-        collections = catalog_indexer.search_collections(request.query, top_k=request.top_k)
-        all_results.extend(collections)
+        results_by_type["collection"] = catalog_indexer.search_collections(request.query, top_k=request.top_k)
 
     if "page" in types and catalog_indexer:
-        pages = catalog_indexer.search_pages(request.query, top_k=request.top_k)
-        all_results.extend(pages)
+        # Augment query with English keywords for cross-language guide search
+        page_query = _augment_query_for_pages(request.query)
+        results_by_type["page"] = catalog_indexer.search_pages(page_query, top_k=request.top_k)
 
-    # Sort by score descending, take top_k
+    # Balanced merge: guarantee min slots per type, fill remainder by score
+    active_types = [t for t in types if results_by_type.get(t)]
+    if not active_types:
+        return {"results": [], "query": request.query, "types": types}
+
+    min_per_type = max(1, request.top_k // (len(active_types) + 1))
+    guaranteed = []
+    remaining_pool = []
+
+    for t in active_types:
+        items = results_by_type[t]
+        guaranteed.extend(items[:min_per_type])
+        remaining_pool.extend(items[min_per_type:])
+
+    # Fill remaining slots from the pool sorted by score
+    remaining_pool.sort(key=lambda r: r.get("score", 0), reverse=True)
+    slots_left = request.top_k - len(guaranteed)
+    all_results = guaranteed + remaining_pool[:max(0, slots_left)]
+
+    # Final sort by score for presentation
     all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
-    all_results = all_results[:request.top_k]
 
     return {"results": all_results, "query": request.query, "types": types}
 
@@ -1819,3 +1894,72 @@ async def get_agent_all_steps(task_id: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5000)
+
+
+# ── Order Endpoints ─────────────────────────────────────────────
+
+
+@app.get("/orders")
+async def list_orders(
+    query: str = "",
+    limit: int = 20,
+    status: str = "any",
+):
+    """List/search orders. query: customer name, email, or order number."""
+    if not shopify_graphql_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Shopify not configured. Set SHOPIFY_SHOP_DOMAIN and SHOPIFY_ACCESS_TOKEN.",
+        )
+    try:
+        orders = await shopify_graphql_client.fetch_orders(
+            query=query or None, first=min(limit, 50), status=status
+        )
+        return {"total": len(orders), "orders": orders}
+    except Exception as e:
+        logger.error(f"Order list failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)[:300])
+
+
+@app.get("/orders/{id_or_name}")
+async def get_order_detail(id_or_name: str):
+    """Get single order by name (#1234) or GID."""
+    if not shopify_graphql_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Shopify not configured. Set SHOPIFY_SHOP_DOMAIN and SHOPIFY_ACCESS_TOKEN.",
+        )
+    try:
+        order = await shopify_graphql_client.fetch_order(id_or_name)
+        if not order:
+            raise HTTPException(status_code=404, detail=f"Order {id_or_name} not found")
+        return order
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Order detail failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)[:300])
+
+
+@app.get("/orders/{id_or_name}/fulfillments")
+async def get_order_fulfillments(id_or_name: str):
+    """Get fulfillment/shipment info for an order."""
+    if not shopify_graphql_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Shopify not configured. Set SHOPIFY_SHOP_DOMAIN and SHOPIFY_ACCESS_TOKEN.",
+        )
+    try:
+        order = await shopify_graphql_client.fetch_order(id_or_name)
+        if not order:
+            raise HTTPException(status_code=404, detail=f"Order {id_or_name} not found")
+        return {
+            "order_name": order.get("name", ""),
+            "fulfillment_status": order.get("fulfillment_status", ""),
+            "fulfillments": order.get("fulfillments", []),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Fulfillment lookup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)[:300])
