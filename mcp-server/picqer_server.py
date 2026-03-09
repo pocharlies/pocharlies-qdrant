@@ -24,7 +24,7 @@ logger = logging.getLogger("picqer-mcp")
 # ── Configuration ──────────────────────────────────────────────────────────
 _config = PicqerConfig(
     subdomain=os.getenv("PICQER_SUBDOMAIN", "skirmshop"),
-    api_key=os.getenv("PICQER_API_KEY", "Tcp3JY1GyYxnyR4Of1OrqqkE8y41vUv4zZddROAHa5UfUqlp"),
+    api_key=os.getenv("PICQER_API_KEY", ""),
 )
 api = PicqerClient(_config)
 
