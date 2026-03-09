@@ -1428,7 +1428,8 @@ async def picqer_api(method: str, path: str, params: str = "{}") -> str:
 #  MAIN
 # ═══════════════════════════════════════════════════════════════════════════
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the Picqer WMS MCP server."""
     transport = "stdio"
     if len(sys.argv) > 1 and sys.argv[1] == "sse":
         transport = "sse"
@@ -1441,3 +1442,7 @@ if __name__ == "__main__":
         mcp.settings.port = int(os.getenv("MCP_PORT", "8001"))
 
     mcp.run(transport=transport)
+
+
+if __name__ == "__main__":
+    main()
