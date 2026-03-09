@@ -92,6 +92,21 @@ services:
       rag-service:
         condition: service_healthy
 
+  # Picqer WMS MCP Server (SSE mode for agent-service connection)
+  picqer-mcp:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile.picqer
+    container_name: pocharlies-picqer-mcp
+    restart: unless-stopped
+    environment:
+      - PICQER_SUBDOMAIN=${PICQER_SUBDOMAIN:-skirmshop}
+      - PICQER_API_KEY=${PICQER_API_KEY}
+    networks:
+      - skirmshop-network
+    ports:
+      - "127.0.0.1:8003:8001"
+
   # PostgreSQL for agent state, tasks, schedules
   postgres:
     image: postgres:16-alpine
@@ -137,6 +152,8 @@ services:
       redis:
         condition: service_started
       mcp-server:
+        condition: service_started
+      picqer-mcp:
         condition: service_started
 
 volumes:
